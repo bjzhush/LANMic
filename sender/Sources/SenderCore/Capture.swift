@@ -11,17 +11,24 @@ import NetMicProtocol
 ///
 /// installTap is not used: its buffers are 100–400 ms, far over the latency budget.
 /// The sink node receives buffers at the device IO size (240 frames = 5 ms by default, see --io-frames).
-final class Capture {
-    struct Options {
-        var deviceQuery: String
-        var channel: Int32  // -1 = mix all channels
-        var gainDb: Float
-        var ioFrames: UInt32  // requested device IO buffer size; 0 = device default
+public final class Capture: @unchecked Sendable {  // state on `queue` or behind `statsLock`
+    public struct Options {
+        public var deviceQuery: String
+        public var channel: Int32  // -1 = mix all channels
+        public var gainDb: Float
+        public var ioFrames: UInt32  // requested device IO buffer size; 0 = device default
+
+        public init(deviceQuery: String, channel: Int32 = 0, gainDb: Float = 0, ioFrames: UInt32 = 240) {
+            self.deviceQuery = deviceQuery
+            self.channel = channel
+            self.gainDb = gainDb
+            self.ioFrames = ioFrames
+        }
     }
 
     /// Called on the packetizer thread for every 240-frame block.
-    var onBlock: ((_ samples: [Int16], _ streamId: UInt32, _ samplePos: UInt64) -> Void)?
-    var log: (String) -> Void = { print($0) }
+    public var onBlock: ((_ samples: [Int16], _ streamId: UInt32, _ samplePos: UInt64) -> Void)?
+    public var log: (String) -> Void = { print($0) }
 
     private let options: Options
     private let queue = DispatchQueue(label: "netmic.capture")
@@ -48,7 +55,7 @@ final class Capture {
     private var blocks: UInt64 = 0
     private var running = false
 
-    init(options: Options) {
+    public init(options: Options) {
         self.options = options
         // Watchdog: the engine can stop delivering audio without a configuration
         // change notification (sleep/wake, device unplugged). If capture should be
@@ -61,13 +68,23 @@ final class Capture {
         watchdog = timer
     }
 
-    func start() { queue.async { self.wantRunning = true; self.ensureState() } }
-    func stop() { queue.async { self.wantRunning = false; self.ensureState() } }
+    public func start() { queue.async { self.wantRunning = true; self.ensureState() } }
+    public func stop() { queue.async { self.wantRunning = false; self.ensureState() } }
 
-    var isRunning: Bool { statsLock.withLock { running } }
+    /// Stops capture and the watchdog and waits for both; the object is unusable afterwards.
+    public func shutdown() {
+        queue.sync {
+            wantRunning = false
+            ensureState()
+            watchdog?.cancel()
+            watchdog = nil
+        }
+    }
+
+    public var isRunning: Bool { statsLock.withLock { running } }
 
     /// RMS and peak level (dBFS) since the last call, plus total blocks produced.
-    func takeLevel() -> (rmsDb: Float, peakDb: Float, blocks: UInt64, overflows: UInt64) {
+    public func takeLevel() -> (rmsDb: Float, peakDb: Float, blocks: UInt64, overflows: UInt64) {
         let overflows = queue.sync { worker?.overflows ?? 0 }
         return statsLock.withLock {
             let rms = levelCount > 0 ? sqrt(levelSumSquares / Double(levelCount)) : 0
@@ -264,7 +281,7 @@ final class Capture {
     }
 }
 
-func dbfs(_ x: Float) -> Float { x > 0 ? 20 * log10f(x) : -120 }
+public func dbfs(_ x: Float) -> Float { x > 0 ? 20 * log10f(x) : -120 }
 
 /// Asks for `frames` as this process's IO buffer size on `device` (the HAL keeps
 /// it per process), clamped to the device's range. Returns the size in effect.

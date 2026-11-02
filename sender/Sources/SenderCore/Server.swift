@@ -2,17 +2,34 @@ import Foundation
 import NetMicKit
 import NetMicProtocol
 
-/// UDP control + audio fan-out. The network loop runs on the calling thread;
-/// sendAudio() is called from the capture packetizer thread.
-final class Server {
-    struct Options {
-        var port: UInt16
-        var name: String
-        var token: Token
-        var alwaysOn: Bool
-        var stopGrace: Double
-        var allowAnySource: Bool
-        var verbose: Bool
+/// UDP control + audio fan-out. The network loop runs on the thread that calls
+/// run() until stop(); sendAudio() is called from the capture packetizer thread.
+public final class Server: @unchecked Sendable {  // state behind `lock`
+    public struct Options {
+        public var port: UInt16
+        public var name: String
+        public var token: Token
+        public var alwaysOn: Bool
+        public var stopGrace: Double
+        public var allowAnySource: Bool
+        public var verbose: Bool
+
+        public init(port: UInt16 = NetMic.defaultPort, name: String = "M4 Mic", token: Token = .zero,
+                    alwaysOn: Bool = false, stopGrace: Double = 5, allowAnySource: Bool = false, verbose: Bool = false) {
+            self.port = port
+            self.name = name
+            self.token = token
+            self.alwaysOn = alwaysOn
+            self.stopGrace = stopGrace
+            self.allowAnySource = allowAnySource
+            self.verbose = verbose
+        }
+    }
+
+    public struct Status {
+        public var subscribers: [String]
+        public var capturing: Bool
+        public var packetsSent: UInt64
     }
 
     private let options: Options
@@ -23,35 +40,57 @@ final class Server {
     private var subscribers: [SocketAddress: Double] = [:]  // → last SUBSCRIBE time
     private var audioSeq: UInt32 = 0  // packetizer thread only
     private var packetsSent: UInt64 = 0
+    private var alwaysOnValue: Bool
+    private var stopRequested = false
 
-    init(options: Options, capture: AudioSource) throws {
+    public init(options: Options, capture: AudioSource) throws {
         self.options = options
         self.capture = capture
+        alwaysOnValue = options.alwaysOn
         socket = try UDPSocket(port: options.port)
         capture.onBlock = { [unowned self] samples, streamId, pos in sendAudio(samples, streamId: streamId, samplePos: pos) }
     }
 
-    func run() -> Never {
-        log("listening on UDP \(options.port) as \"\(options.name)\"\(options.alwaysOn ? ", always-on" : "")")
+    /// Capture regardless of subscribers (can be changed while running).
+    public var alwaysOn: Bool {
+        get { lock.withLock { alwaysOnValue } }
+        set { lock.withLock { alwaysOnValue = newValue } }
+    }
+
+    public func status() -> Status {
+        let (subs, sent) = lock.withLock { (subscribers.keys.map { "\($0)" }.sorted(), packetsSent) }
+        return Status(subscribers: subs, capturing: capture.isRunning, packetsSent: sent)
+    }
+
+    /// Makes run() return (within ~100 ms), releasing the microphone and the port.
+    public func stop() { lock.withLock { stopRequested = true } }
+
+    public func run() {
+        log("listening on UDP \(options.port) as \"\(options.name)\"\(alwaysOn ? ", always-on" : "")")
+        defer {
+            capture.shutdown()
+            capture.onBlock = nil
+            lock.withLock { subscribers.removeAll() }
+        }
         var wantCapture = false
         var emptySince: Double? = hostSeconds()
         var lastStats = hostSeconds()
         var lastPacketsSent: UInt64 = 0
 
-        while true {
+        while !lock.withLock({ stopRequested }) {
             if let (bytes, from) = socket.receive(timeoutMs: 100) { handle(bytes, from: from) }
             let now = hostSeconds()
 
-            let count: Int = lock.withLock {
+            let (count, alwaysOn): (Int, Bool) = lock.withLock {
                 for (addr, seen) in subscribers where now - seen > Double(NetMic.subscriberTimeoutMs) / 1000 {
                     subscribers[addr] = nil
                     log("subscriber \(addr) timed out")
                 }
-                return subscribers.count
+                return (subscribers.count, alwaysOnValue)
             }
 
             let desired: Bool
-            if options.alwaysOn || count > 0 {
+            if alwaysOn || count > 0 {
                 emptySince = nil
                 desired = true
             } else {
@@ -123,12 +162,15 @@ final class Server {
     }
 }
 
+/// Where log lines go (default: stdout). Set before starting a Server or Capture.
+public var logSink: (String) -> Void = { print($0) }
+
 private let timestampFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss.SSS"
     return f
 }()
 
-func log(_ message: String) {
-    print("[\(timestampFormatter.string(from: Date()))] \(message)")
+public func log(_ message: String) {
+    logSink("[\(timestampFormatter.string(from: Date()))] \(message)")
 }

@@ -212,7 +212,7 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
   - 处理：放到阶段 4（验收要求"除故障期间外没有欠载"），先实测到达时间分布，再定缓冲目标
     （规格允许端到端 ≤ 50 ms）。
 
-## 阶段 4：漂移补偿与健壮性 —— 已完成，等待用户确认
+## 阶段 4：漂移补偿与健壮性 —— 已完成，用户验收通过（2026-11-02）
 
 ### 欠载原因与缓冲目标（实测）
 工具：`netmic-probe --trace` 记录每个 AUDIO 包的到达时间；`driver/build/netmic_replay` 用真实到达时间驱动
@@ -297,3 +297,30 @@ JitterBuffer，模拟 HAL 每 10.67 ms 读 512 帧（16 个读相位，合计相
 （08:15:50，又一次短暂网络停顿，丢包 0），重新缓冲后深度 +10 ms（低于 15 ms 追赶阈值，由 PI 修正，
 约 20 s 回到 19.9 ms）；之后稳定。拔插 USB 麦克风（场景 D）没有单独测试。
 
+
+## 阶段 5：易用性 —— 已完成，等待用户验收
+
+### 菜单栏 App（NetMic Sender）
+- 发送端代码拆成库 `SenderCore`（AudioDevices、Capture、Server、ToneSource），命令行 `netmic-sender` 和 App 共用，
+  行为一致。为 App 新增：`Server.stop()`（run() 约 100 ms 内返回，释放麦克风和端口）、运行中可改的 `alwaysOn`、
+  `status()`（订阅者、是否在采集、发包数）；`Capture.shutdown()`（同步停采集和看门狗）；`logSink`（App 里写到
+  os_log，subsystem `com.netmic.sender`）。
+- App：SwiftUI `MenuBarExtra`（window 样式），`LSUIElement`。图标采集时为实心麦克风。菜单内容：状态、峰值电平条、
+  麦克风选择（按 UID 保存；拔掉的设备显示“未连接”，插回后由 Capture 的重试自动续上）、常开采集、登录时启动
+  （`SMAppService.mainApp`）、退出。其他参数（Name、GainDb、Channel、Token、StopGrace、IOFrames、Port）走
+  `defaults write com.netmic.sender`。
+- 权限：Info.plist 含 `NSMicrophoneUsageDescription`、`NSLocalNetworkUsageDescription`；启动时请求麦克风权限，
+  被拒时菜单显示红字和打开设置的按钮。端口被占用（命令行版还开着）时显示错误。
+- 构建：`scripts/build-app.sh` → SwiftPM release 构建 + 组装 `sender/build/NetMicSender.app` + ad-hoc 签名
+  （显示名 “NetMic Sender”，最低 macOS 13，已用 vtool 确认 minos 13.0）。M4 用 `scp -r` 从 M2 拉取。
+  ad-hoc 签名每次构建不同，重新构建后 M4 会再问一次麦克风权限（README 常见问题里写了）。
+
+### README
+重写：要求、从零安装（构建 → 装驱动 → M4 装 App 和授权 → 使用）、菜单说明、`defaults` 设置、命令行版、
+驱动配置表、网络（建议有线）、常见问题、两台机器的卸载步骤、开发工具。
+
+### 测试
+- 新增 Swift 测试 `ServerLifecycleTests`：ToneSource + Server 跑在线程上，回环订阅收到音频；取消订阅后常开时继续、
+  关掉常开后按 stop-grace 停止、再打开常开又开始；stop() 后 run() 1 s 内返回、音源停止；同一端口第二轮能重新绑定。
+- Swift 24 个、C++ 44 个、端到端全部通过。
+- 在 M2 上启动 App 确认能运行（停在首次麦克风授权）；实际采集和发送在 M4 上人工验收。

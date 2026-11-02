@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import NetMicProtocol
+import SenderCore
 
 let usage = """
     usage:
@@ -128,6 +129,7 @@ do {
                                            stopGrace: stopGrace, allowAnySource: allowAnySource, verbose: verbose),
                             capture: source)
     server.run()
+    exit(0)
 } catch {
     fail("\(error)")
 }

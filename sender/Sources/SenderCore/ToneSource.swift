@@ -3,12 +3,18 @@ import NetMicKit
 import NetMicProtocol
 
 /// The sender's audio source; Capture (microphone) or ToneSource (test signal).
-protocol AudioSource: AnyObject {
+public protocol AudioSource: AnyObject {
     var onBlock: ((_ samples: [Int16], _ streamId: UInt32, _ samplePos: UInt64) -> Void)? { get set }
     var isRunning: Bool { get }
     func start()
     func stop()
     func takeLevel() -> (rmsDb: Float, peakDb: Float, blocks: UInt64, overflows: UInt64)
+    /// Stops for good (default: stop()).
+    func shutdown()
+}
+
+public extension AudioSource {
+    func shutdown() { stop() }
 }
 
 extension Capture: AudioSource {}
@@ -16,9 +22,9 @@ extension Capture: AudioSource {}
 /// Test signal: a -12 dBFS sine paced by the host clock, emitted in 240-frame
 /// blocks exactly like captured audio. Lets the network path and the driver be
 /// tested without a microphone or someone talking.
-final class ToneSource: AudioSource {
-    var onBlock: ((_ samples: [Int16], _ streamId: UInt32, _ samplePos: UInt64) -> Void)?
-    var log: (String) -> Void = { print($0) }
+public final class ToneSource: AudioSource {
+    public var onBlock: ((_ samples: [Int16], _ streamId: UInt32, _ samplePos: UInt64) -> Void)?
+    public var log: (String) -> Void = { print($0) }
 
     private let frequency: Double
     private let lock = NSLock()
@@ -33,11 +39,11 @@ final class ToneSource: AudioSource {
         func set() { lock.withLock { value = true } }
     }
 
-    init(frequency: Double) { self.frequency = frequency }
+    public init(frequency: Double) { self.frequency = frequency }
 
-    var isRunning: Bool { lock.withLock { thread != nil } }
+    public var isRunning: Bool { lock.withLock { thread != nil } }
 
-    func start() {
+    public func start() {
         lock.lock()
         defer { lock.unlock() }
         guard thread == nil else { return }
@@ -72,7 +78,7 @@ final class ToneSource: AudioSource {
         log(String(format: "tone: started %.0f Hz test signal, stream %08x", frequency, streamId))
     }
 
-    func stop() {
+    public func stop() {
         lock.withLock {
             guard thread != nil else { return }
             stopFlag?.set()
@@ -82,7 +88,7 @@ final class ToneSource: AudioSource {
         log("tone: stopped")
     }
 
-    func takeLevel() -> (rmsDb: Float, peakDb: Float, blocks: UInt64, overflows: UInt64) {
+    public func takeLevel() -> (rmsDb: Float, peakDb: Float, blocks: UInt64, overflows: UInt64) {
         let (n, running) = lock.withLock { (blocks, thread != nil) }
         return running ? (dbfs(0.25 / sqrt(2)), dbfs(0.25), n, 0) : (-120, -120, n, 0)
     }

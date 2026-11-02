@@ -1,12 +1,12 @@
 import CoreAudio
 import Foundation
 
-struct InputDevice {
-    let id: AudioDeviceID
-    let name: String
-    let uid: String
-    let sampleRate: Double
-    let inputChannels: Int
+public struct InputDevice: Hashable {
+    public let id: AudioDeviceID
+    public let name: String
+    public let uid: String
+    public let sampleRate: Double
+    public let inputChannels: Int
 }
 
 private func address(_ selector: AudioObjectPropertySelector,
@@ -40,7 +40,7 @@ private func nominalSampleRate(_ id: AudioDeviceID) -> Double {
     return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &rate) == noErr ? rate : 0
 }
 
-func listInputDevices() -> [InputDevice] {
+public func listInputDevices() -> [InputDevice] {
     var addr = address(kAudioHardwarePropertyDevices)
     var size: UInt32 = 0
     guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else {
@@ -59,14 +59,14 @@ func listInputDevices() -> [InputDevice] {
     }
 }
 
-enum DeviceLookup {
+public enum DeviceLookup {
     case found(InputDevice)
     case notFound
     case ambiguous([InputDevice])
 }
 
 /// Exact UID match first, then case-insensitive name substring.
-func findInputDevice(_ query: String) -> DeviceLookup {
+public func findInputDevice(_ query: String) -> DeviceLookup {
     let devices = listInputDevices()
     if let d = devices.first(where: { $0.uid == query }) { return .found(d) }
     let matches = devices.filter { $0.name.localizedCaseInsensitiveContains(query) }

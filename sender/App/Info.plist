@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.netmic.sender</string>
+	<key>CFBundleName</key>
+	<string>NetMic Sender</string>
+	<key>CFBundleDisplayName</key>
+	<string>NetMic Sender</string>
+	<key>CFBundleExecutable</key>
+	<string>NetMicSender</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>NetMic Sender 把这台 Mac 的麦克风通过局域网发送给另一台 Mac，作为它的 “M4 Mic” 输入设备。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NetMic Sender 需要在局域网内回应接收端的发现请求并发送音频。</string>
+</dict>
+</plist>
