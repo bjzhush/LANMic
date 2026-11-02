@@ -5,7 +5,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "==> swift test (sender)"
-(cd "$ROOT/sender" && swift test)
+# With only Command Line Tools, the default swiftbuild system doesn't pass the
+# swift-testing macro plugin path ("plugin for module 'TestingMacros' not found").
+SWIFT_TEST_FLAGS=()
+TESTING_PLUGINS="$(xcode-select -p)/usr/lib/swift/host/plugins/testing"
+if [[ -d "$TESTING_PLUGINS" ]]; then
+    SWIFT_TEST_FLAGS=(-Xswiftc -plugin-path -Xswiftc "$TESTING_PLUGINS")
+fi
+(cd "$ROOT/sender" && swift test ${SWIFT_TEST_FLAGS[@]+"${SWIFT_TEST_FLAGS[@]}"})
 
 echo "==> C++ tests (driver)"
 if command -v cmake >/dev/null; then

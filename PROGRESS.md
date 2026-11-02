@@ -19,6 +19,10 @@
    修复需 sudo（移走这两个文件，或重装 CLT），由用户执行。
 2. **cmake 未安装**：`brew install cmake`。阶段 0 的 `scripts/test-all.sh` 在没有 cmake 时会退回直接用 clang++ 编译测试；阶段 2 构建驱动必须有 cmake。
 3. 无 XCTest（只有 CLT）→ Swift 测试使用 swift-testing（`import Testing`），CLT 自带。
+4. 用户已移走问题 1 中的两个文件（2026-11-01），SwiftPM 恢复正常。
+5. 只有 CLT 时，默认构建系统（swiftbuild）从干净目录构建测试会报 `plugin for module 'TestingMacros' not found`，表现为 `error: fatalError`
+   （增量构建有时能过，容易误判）。解决：`swift test -Xswiftc -plugin-path -Xswiftc $(xcode-select -p)/usr/lib/swift/host/plugins/testing`，
+   `scripts/test-all.sh` 已自动加上。
 
 ## 阶段 0：骨架与纯逻辑 —— 已完成，待验收
 
@@ -34,7 +38,7 @@
 
 测试结果（2026-11-01，M4）：
 - C++：27/27 通过（clang++ 直接编译，cmake 缺失）。ThreadSanitizer 下并发压力测试无报告。
-- Swift：12/12 通过。由于上面的 SwiftPM 问题，是用 swiftc 手工编译模块 + swift-testing 入口跑的，**还需在修好 CLT 后用 `swift test` 复验**。
+- Swift：12/12 通过（修好 CLT 后，`scripts/test-all.sh` 用 `swift test` 从干净目录和增量两种方式各跑一次，均通过）。
 
 漂移仿真结果（300 s，0–4 ms 均匀网络抖动 + 乱序，512 帧 IO，目标 20 ms）：
 
