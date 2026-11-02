@@ -145,5 +145,8 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
   `codesign --verify --strict` 通过（adhoc），`plutil -lint` 通过。
 - 冒烟测试时 os_log 正常输出 `loading: device "M4 Mic", 1 ch, target 20 ms ...`，无配置警告。
 
-人工验收记录（待填）：
+人工验收记录（2026-11-02，M2）：
+- 安装：`install-driver.sh` 成功，「系统设置 → 声音 → 输入」出现 "M4 Mic"。
+- QuickTime 选 M4 Mic 录 10 s：回放全程是稳定的嘟声，没有其他声音（用户确认）。
+- 卸载：待确认。
 
