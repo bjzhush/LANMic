@@ -10,7 +10,9 @@
 | M4（发送端） | macOS 15.7.3 (24G419) | 只运行 netmic-sender |
 
 **与规格的差异**：规格假定在 M4 上开发、用 `deploy-m2.sh` 推到 M2；实际开发机是 M2（2026-11-01 用户指出，此前记录误写为 M4）。
-因此驱动可在 M2 本机直接安装，需要拷贝的是 `netmic-sender` 到 M4。部署脚本的调整待与用户确认。
+因此驱动可在 M2 本机直接安装，需要拷贝的是 `netmic-sender` 到 M4。网络上只能 M4 → M2 发起 ssh，反向不行。
+部署变更（2026-11-02 用户同意）：删除 `deploy-m2.sh`；驱动在 M2 本机用 `scripts/install-driver.sh` 安装（sudo 由用户执行）；
+M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 
 ### 环境问题
 
@@ -75,7 +77,7 @@
 - `netmic-probe`：`--discover`、`--record N --out x.wav`、`--stats N`；统计收包、丢包（按 seq）、乱序、重复、RFC 3550 抖动、漂移 ppm（samplePos 对到达时间做最小二乘，需 ≥10 s 数据）。Ctrl-C 提前结束时照样写文件、发 UNSUBSCRIBE。
 - 广播发现同时发往 `255.255.255.255` 和每个网卡的子网广播地址（多网卡时受限广播只走主网卡）。
 - 新增模块：`NetMicKit`（UDP socket、接收统计，sender / probe 共用），`CNetMicSupport`（C 写的无锁环形缓冲，供采集实时回调使用）。新增 11 个单元测试（漂移估计、抖动、丢包/乱序/重复、声道选择/混合、溢出、回环收发）。
-- `scripts/build-all.sh`、`scripts/deploy-m2.sh`（阶段 1 只拷 probe；有驱动后同时安装驱动）。
+- `scripts/build-all.sh`。（原有 `scripts/deploy-m2.sh`，因开发机就是 M2 已删除，见「环境」。）
 
 设计变更（相对规格 4.1）：
 - **采集不用 `installTap`，改用 `AVAudioSinkNode`**（仍是 AVAudioEngine）。Apple 文档写明 installTap 的缓冲范围是 100–400 ms，超出 50 ms 的延迟预算；sink node 按设备 IO 周期（约 10 ms）回调。
