@@ -31,6 +31,10 @@ final class Capture {
     private var worker: Worker?
     private var configObserver: NSObjectProtocol?
     private var retryScheduled = false
+    private var configChangePending = false
+    private var startedDevice: AudioDeviceID = 0
+    private var startedFormat: (rate: Double, channels: AVAudioChannelCount) = (0, 0)
+    private var lastStart: DispatchTime = .now()
 
     private let statsLock = NSLock()
     private var levelSumSquares: Double = 0
@@ -143,16 +147,50 @@ final class Capture {
             guard let self else { return }
             self.queue.async {
                 guard self.engine === engine else { return }
-                self.log("capture: audio configuration changed — restarting with a new stream")
-                self.stopEngine()
-                self.ensureState()
+                self.configurationChanged()
             }
         }
         self.engine = engine
         self.worker = worker
+        startedDevice = device.id
+        startedFormat = (hw.sampleRate, hw.channelCount)
+        lastStart = .now()
         statsLock.withLock { running = true }
         log(String(format: "capture: started \"%@\" (%.0f Hz, %d ch, using %@), stream %08x", device.name,
                    hw.sampleRate, hw.channelCount, channel < 0 ? "mix" : "channel \(channel)", worker.streamId))
+    }
+
+    /// AVAudioEngineConfigurationChange also fires for changes that need no action
+    /// (selecting the device on the input unit posts one shortly after start), so
+    /// notifications are coalesced for 300 ms and the engine is only rebuilt when it
+    /// stopped or the device / format changed. Rebuilds are at least 1 s apart.
+    private func configurationChanged() {
+        guard !configChangePending else { return }
+        configChangePending = true
+        queue.asyncAfter(deadline: .now() + 0.3) {
+            self.configChangePending = false
+            guard let engine = self.engine, let unit = engine.inputNode.audioUnit else { return }
+            var dev = AudioDeviceID(0)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &dev, &size)
+            let hw = engine.inputNode.inputFormat(forBus: 0)
+            let state = String(format: "running %@, device %u→%u, %.0f Hz %d ch → %.0f Hz %d ch",
+                               engine.isRunning ? "yes" : "no", self.startedDevice, dev,
+                               self.startedFormat.rate, self.startedFormat.channels, hw.sampleRate, hw.channelCount)
+            if engine.isRunning && dev == self.startedDevice && hw.sampleRate == self.startedFormat.rate
+                && hw.channelCount == self.startedFormat.channels {
+                self.log("capture: audio configuration change ignored (\(state))")
+                return
+            }
+            self.log("capture: audio configuration changed (\(state)) — restarting with a new stream")
+            self.stopEngine()
+            let wait = 1.0 - Double(DispatchTime.now().uptimeNanoseconds - self.lastStart.uptimeNanoseconds) / 1e9
+            if wait > 0 {
+                self.queue.asyncAfter(deadline: .now() + wait) { self.ensureState() }
+            } else {
+                self.ensureState()
+            }
+        }
     }
 
     private func stopEngine() {
