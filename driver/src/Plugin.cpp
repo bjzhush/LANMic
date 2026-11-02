@@ -10,7 +10,7 @@ namespace {
 std::shared_ptr<aspl::Driver> makeDriver() {
     netmic::Config config = netmic::loadConfig();
     for (const auto& w : config.warnings) NM_LOG_ERROR("config: %{public}s", w.c_str());
-    NM_LOG("loading: device \"%{public}s\", %u ch, target %u ms, sender %{public}s:%u (stage 2: 440 Hz test tone)",
+    NM_LOG("loading: device \"%{public}s\", %u ch, target %u ms, sender %{public}s:%u",
            config.deviceName.c_str(), config.channels, config.targetLatencyMs,
            config.senderAddress.empty() ? "<discover>" : config.senderAddress.c_str(), config.port);
     return netmic::createDriver(config);

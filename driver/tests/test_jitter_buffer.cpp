@@ -218,6 +218,22 @@ TEST(jb_request_reset) {
     CHECK(isRamp(out, kIo, 2400));
 }
 
+TEST(jb_clear_empties_immediately) {
+    JitterBuffer jb(fixedRatio());
+    for (uint64_t k = 0; k < 10; ++k) writePacket(jb, 1, k);
+    float out[kIo];
+    jb.read(out, kIo);
+    CHECK(isRamp(out, kIo, 0));
+    jb.clear();  // no write needed for it to take effect
+    jb.read(out, kIo);
+    CHECK(isSilent(out, kIo));
+    CHECK(!jb.stats().playing);
+    // Same stream continues later: a fresh mapping, buffered from the new packet.
+    for (uint64_t k = 20; k < 25; ++k) writePacket(jb, 1, k);
+    jb.read(out, kIo);
+    CHECK(isRamp(out, kIo, 4800));
+}
+
 TEST(jb_ignores_bad_arguments) {
     JitterBuffer jb(fixedRatio());
     jb.write(1, 0, static_cast<const int16_t*>(nullptr), 240);
@@ -381,6 +397,7 @@ TEST(jb_concurrent_stress) {
             uint32_t r = rng() % 1000;
             if (r == 0) ++stream;
             if (r == 1) jb.requestReset();
+            if (r == 2) jb.clear();
             uint64_t idx = (r < 20) ? k + (rng() % 8) - 4 : k;  // some reordering / duplicates
             jb.write(stream, idx * kFpp, pcm, kFpp);
             ++k;

@@ -23,8 +23,8 @@ cmake -S "$ROOT/driver" -B "$ROOT/driver/build" -DCMAKE_BUILD_TYPE=Release >/dev
 cmake --build "$ROOT/driver/build" -j
 "$ROOT/driver/build/netmic_tests"
 
-echo "==> driver smoke test (loads NetMic.driver in-process, no coreaudiod)"
-"$ROOT/driver/build/netmic_plugin_smoke" "$ROOT/driver/build/NetMic.driver"
+echo "==> driver end-to-end (sender --tone → UDP loopback → NetMic.driver in-process; no coreaudiod)"
+"$ROOT/scripts/e2e-local.sh"
 
 if [[ "${TSAN:-0}" == 1 ]]; then
     echo "==> C++ concurrency test under ThreadSanitizer"
@@ -33,4 +33,10 @@ if [[ "${TSAN:-0}" == 1 ]]; then
         "$ROOT/driver/src/JitterBuffer.cpp" "$ROOT/driver/tests/test_main.cpp" \
         "$ROOT/driver/tests/test_jitter_buffer.cpp" -o "$ROOT/driver/build/netmic_tests_tsan"
     "$ROOT/driver/build/netmic_tests_tsan" concurrent
+    echo "==> C++ network receiver tests under ThreadSanitizer"
+    clang++ -std=c++17 -O1 -g -fsanitize=thread -I"$ROOT/shared" -I"$ROOT/driver/src" \
+        "$ROOT"/driver/src/{JitterBuffer,Config,NetReceiver,Log}.cpp "$ROOT/driver/tests/test_main.cpp" \
+        "$ROOT"/driver/tests/test_{net_receiver,sample_time_cache}.cpp -framework CoreFoundation \
+        -o "$ROOT/driver/build/netmic_net_tsan"
+    "$ROOT/driver/build/netmic_net_tsan"
 fi

@@ -32,6 +32,12 @@ void JitterBuffer::resetTo(int64_t base) {
     statResets_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void JitterBuffer::clear() {
+    resetRequested_.store(false, std::memory_order_relaxed);
+    resetTo(writePos_.load(std::memory_order_relaxed) + config_.capacityFrames);
+    anchored_ = false;
+}
+
 template <typename Sample>
 void JitterBuffer::writeImpl(uint32_t streamId, uint64_t samplePos, const Sample* samples, uint32_t frames) {
     const int64_t cap = config_.capacityFrames;

@@ -29,29 +29,26 @@ AudioStreamBasicDescription floatFormat(uint32_t channels) {
 
 }  // namespace
 
-os_log_t driverLog() {
-    static os_log_t log = os_log_create("com.netmic.driver", "driver");
-    return log;
-}
-
-os_log_t asplLog() {
-    static os_log_t log = os_log_create("com.netmic.driver", "aspl");
-    return log;
+static JitterBufferConfig bufferConfig(const Config& config) {
+    JitterBufferConfig c;
+    c.targetFrames = config.targetFrames();
+    c.driftCompensation = false;  // stage 4
+    return c;
 }
 
 NetMicHandler::NetMicHandler(const Config& config)
-    : channels_(config.channels), tone_(440.0, 0.25f, NETMIC_SAMPLE_RATE) {}
+    : channels_(config.channels), buffer_(bufferConfig(config)), receiver_(config, buffer_), cache_(buffer_) {
+    receiver_.start();  // runs for the plugin's lifetime
+}
 
 OSStatus NetMicHandler::OnStartIO() {
-    ioRunning_.store(true, std::memory_order_release);
-    NM_LOG("IO started");
+    // IO is stopped here (libASPL holds the IO lock), so the cache can be reset.
+    cache_.reset();
+    receiver_.setActive(true);
     return kAudioHardwareNoError;
 }
 
-void NetMicHandler::OnStopIO() {
-    ioRunning_.store(false, std::memory_order_release);
-    NM_LOG("IO stopped");
-}
+void NetMicHandler::OnStopIO() { receiver_.setActive(false); }
 
 void NetMicHandler::OnReadClientInput(const std::shared_ptr<aspl::Client>&,
                                       const std::shared_ptr<aspl::Stream>&,
@@ -62,7 +59,7 @@ void NetMicHandler::OnReadClientInput(const std::shared_ptr<aspl::Client>&,
     // Real-time thread: no allocation, locks, syscalls or logging.
     if (!bytes) return;
     const uint32_t frames = bytesCount / (sizeof(float) * channels_);
-    tone_.fill(static_cast<float*>(bytes), frames, channels_, timestamp);
+    cache_.read(timestamp, static_cast<float*>(bytes), frames, channels_);
 }
 
 std::shared_ptr<aspl::Driver> createDriver(const Config& config) {

@@ -1,16 +1,19 @@
 // Loads NetMic.driver in-process and drives it the way the HAL does:
-// factory → Initialize → property queries → client → StartIO → IO cycles → StopIO.
+// factory → Initialize → property queries → clients → StartIO → IO cycles → StopIO.
 // Catches crashes and wrong properties before the bundle goes near coreaudiod.
 //
-// Usage: netmic_plugin_smoke path/to/NetMic.driver
+// Usage: netmic_plugin_smoke path/to/NetMic.driver [--expect-tone]
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "test_harness.h"
@@ -19,6 +22,7 @@ namespace {
 
 AudioServerPlugInDriverRef gDriver = nullptr;
 std::string gBundlePath;
+bool gExpectTone = false;
 
 // --- host interface stubs -------------------------------------------------
 
@@ -138,62 +142,92 @@ TEST(smoke_device_properties) {
     CHECK(getProp(gStream, kAudioStreamPropertyDirection, u) && u == 1);  // 1 = input
 }
 
-TEST(smoke_io_cycle_outputs_tone) {
+// Two clients read every IO cycle, paced in real time like the HAL.
+//   default:        1 s; output must be valid samples, identical for both clients.
+//   --expect-tone:  4 s against a local `netmic-sender --tone 440` (the bundle's
+//                   NetMicConfig points at it); the last 2 s must be a continuous
+//                   440 Hz sine at -12 dBFS.
+TEST(smoke_io_cycles) {
     CHECK(gDriver && gDevice && gStream);
     if (!gDriver || !gDevice || !gStream) return;
-    AudioServerPlugInClientInfo client = {1, getpid(), true, CFSTR("com.netmic.smoke")};
-    CHECK((*gDriver)->AddDeviceClient(gDriver, gDevice, &client) == 0);
+    AudioServerPlugInClientInfo c1 = {1, getpid(), true, CFSTR("com.netmic.smoke.1")};
+    AudioServerPlugInClientInfo c2 = {2, getpid(), true, CFSTR("com.netmic.smoke.2")};
+    CHECK((*gDriver)->AddDeviceClient(gDriver, gDevice, &c1) == 0);
+    CHECK((*gDriver)->AddDeviceClient(gDriver, gDevice, &c2) == 0);
     CHECK((*gDriver)->StartIO(gDriver, gDevice, 1) == 0);
+    CHECK((*gDriver)->StartIO(gDriver, gDevice, 2) == 0);
 
     Float64 sampleTime = 0;
     UInt64 hostTime = 0, seed = 0;
     CHECK((*gDriver)->GetZeroTimeStamp(gDriver, gDevice, 1, &sampleTime, &hostTime, &seed) == 0);
     CHECK(hostTime > 0);
-
     Boolean willDo = false, inPlace = false;
     CHECK((*gDriver)->WillDoIOOperation(gDriver, gDevice, 1, kAudioServerPlugInIOOperationReadInput, &willDo,
                                         &inPlace) == 0);
     CHECK(willDo);
 
-    // 100 cycles of 512 frames, contiguous sample times: the result must be one
-    // continuous 440 Hz sine at -12 dBFS.
-    const UInt32 frames = 512, cycles = 100;
-    std::vector<float> all;
-    std::vector<float> buf(frames);
+    const UInt32 frames = 512;
+    const double seconds = gExpectTone ? 4.0 : 1.0;
+    const UInt32 cycles = static_cast<UInt32>(seconds * 48000 / frames);
+    std::vector<float> all, a(frames), b(frames);
+    bool clientsAgree = true, valid = true;
+    auto next = std::chrono::steady_clock::now();
     for (UInt32 i = 0; i < cycles; ++i) {
+        next += std::chrono::microseconds(frames * 1000000ull / 48000);
+        std::this_thread::sleep_until(next);
         AudioServerPlugInIOCycleInfo info = {};
         info.mIOCycleCounter = i;
         info.mNominalIOBufferFrameSize = frames;
-        info.mInputTime.mSampleTime = 1000.0 + i * frames;
+        info.mInputTime.mSampleTime = 1000.0 + double(i) * frames;
         info.mInputTime.mFlags = kAudioTimeStampSampleTimeValid;
-        CHECK((*gDriver)->BeginIOOperation(gDriver, gDevice, 1, kAudioServerPlugInIOOperationReadInput, frames,
-                                           &info) == 0);
-        std::fill(buf.begin(), buf.end(), 99.0f);
-        CHECK((*gDriver)->DoIOOperation(gDriver, gDevice, gStream, 1, kAudioServerPlugInIOOperationReadInput, frames,
-                                        &info, buf.data(), nullptr) == 0);
-        CHECK((*gDriver)->EndIOOperation(gDriver, gDevice, 1, kAudioServerPlugInIOOperationReadInput, frames,
-                                         &info) == 0);
-        all.insert(all.end(), buf.begin(), buf.end());
+        std::fill(a.begin(), a.end(), 99.0f);
+        std::fill(b.begin(), b.end(), 99.0f);
+        for (UInt32 client : {1u, 2u}) {
+            float* buf = client == 1 ? a.data() : b.data();
+            CHECK((*gDriver)->BeginIOOperation(gDriver, gDevice, client, kAudioServerPlugInIOOperationReadInput,
+                                               frames, &info) == 0);
+            CHECK((*gDriver)->DoIOOperation(gDriver, gDevice, gStream, client, kAudioServerPlugInIOOperationReadInput,
+                                            frames, &info, buf, nullptr) == 0);
+            CHECK((*gDriver)->EndIOOperation(gDriver, gDevice, client, kAudioServerPlugInIOOperationReadInput, frames,
+                                             &info) == 0);
+        }
+        clientsAgree &= a == b;
+        for (float s : a) valid &= std::isfinite(s) && s >= -1.0f && s <= 1.0f;
+        all.insert(all.end(), a.begin(), a.end());
+    }
+    CHECK(clientsAgree);
+    CHECK(valid);
+
+    if (gExpectTone) {
+        const size_t n = 2 * 48000;  // last 2 s
+        float peak = 0, maxStep = 0;
+        int crossings = 0;
+        for (size_t i = all.size() - n; i < all.size(); ++i) {
+            peak = std::max(peak, std::fabs(all[i]));
+            maxStep = std::max(maxStep, std::fabs(all[i] - all[i - 1]));
+            if (all[i - 1] < 0 && all[i] >= 0) ++crossings;
+        }
+        const float expectedStep = 0.25f * 2 * float(M_PI) * 440 / 48000;  // max slope per sample
+        std::printf("  tone: peak %.2f dBFS, %d cycles in 2 s, max step %.5f (sine max %.5f)\n",
+                    20 * std::log10(peak), crossings, maxStep, expectedStep);
+        CHECK_MSG(std::fabs(20 * std::log10(peak) + 12.04f) < 0.1f, "peak %f", peak);
+        CHECK_MSG(crossings >= 878 && crossings <= 882, "%d upward zero crossings", crossings);
+        CHECK_MSG(maxStep <= expectedStep * 1.01f, "max step %f: discontinuity", maxStep);
     }
 
-    float peak = 0, maxStep = 0;
-    for (size_t i = 0; i < all.size(); ++i) {
-        peak = std::max(peak, std::fabs(all[i]));
-        if (i) maxStep = std::max(maxStep, std::fabs(all[i] - all[i - 1]));
-    }
-    const float expectedStep = 0.25f * 2 * float(M_PI) * 440 / 48000;  // max slope of the sine per sample
-    CHECK_MSG(std::fabs(20 * std::log10(peak) + 12.04f) < 0.05f, "peak %f", peak);
-    CHECK_MSG(maxStep <= expectedStep * 1.001f, "max step %f (expected <= %f)", maxStep, expectedStep);
-
+    CHECK((*gDriver)->StopIO(gDriver, gDevice, 2) == 0);
     CHECK((*gDriver)->StopIO(gDriver, gDevice, 1) == 0);
-    CHECK((*gDriver)->RemoveDeviceClient(gDriver, gDevice, &client) == 0);
+    CHECK((*gDriver)->RemoveDeviceClient(gDriver, gDevice, &c2) == 0);
+    CHECK((*gDriver)->RemoveDeviceClient(gDriver, gDevice, &c1) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));  // let UNSUBSCRIBE go out
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: %s path/to/NetMic.driver\n", argv[0]);
+    if (argc < 2 || argc > 3 || (argc == 3 && std::strcmp(argv[2], "--expect-tone") != 0)) {
+        std::fprintf(stderr, "usage: %s path/to/NetMic.driver [--expect-tone]\n", argv[0]);
         return 2;
     }
+    gExpectTone = argc == 3;
     char resolved[PATH_MAX];
     if (!realpath(argv[1], resolved)) {
         std::perror(argv[1]);

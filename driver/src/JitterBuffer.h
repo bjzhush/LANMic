@@ -67,6 +67,10 @@ public:
     // Thread-safe request; applied by the writer on its next write().
     void requestReset() { resetRequested_.store(true, std::memory_order_release); }
 
+    // Writer thread only: empties the buffer now (the reader goes back to
+    // Buffering and outputs silence); the next write() starts a new mapping.
+    void clear();
+
     // ---- reader side (real-time safe) ----
     // Always fills `frames` samples of `out` (silence when no data).
     void read(float* out, uint32_t frames);

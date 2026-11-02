@@ -150,3 +150,51 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 - QuickTime 选 M4 Mic 录 10 s：回放全程是稳定的嘟声，没有其他声音（用户确认）。
 - 卸载：`uninstall-driver.sh` 成功，M4 Mic 从输入列表消失。
 
+## 阶段 3：接入网络 —— 已完成，待人工验收
+
+内容：
+- `NetReceiver`（`driver/src/NetReceiver.{h,cpp}`）：插件加载时创建的常驻网络线程，是 JitterBuffer 唯一的写者。
+  - socket 绑定临时端口并开 `SO_BROADCAST`；`poll` 50 ms 超时，每次把队列里的包全部读完。
+  - IO 未运行时不发任何包，收到的包读出后丢弃。
+  - IO 运行时：没配置 `SenderAddress` 就每 1 s 广播 DISCOVER（同时发往 255.255.255.255 和各网卡的子网广播地址），
+    收到格式正确（48 kHz / 1 ch / Int16 / 240 帧）的 ANNOUNCE 后锁定该发送端；之后每 500 ms 发 SUBSCRIBE（带 Token）。
+    只接受来自已锁定发送端（IP + 端口都要对）的 AUDIO。发现来的发送端 5 s 没声音就丢弃并重新发现；
+    配置写死的发送端只记一次警告并继续订阅。发现到的发送端在 IO 停止后仍保留，下次开始录音时立即订阅。
+  - IO 停止时发两次 UNSUBSCRIBE 并清空缓冲；IO 开始时也先清空。
+  - 每 10 s（仅 IO 运行时）和 IO 停止时用 os_log 输出统计：收包、丢包（按 seq）、乱序、被忽略的包、
+    缓冲状态和深度、欠载、过载、补零帧数、迟到包、重置次数。
+- `StartIO` / `StopIO` 只调用 `NetReceiver::setActive()`（一个原子量），不在回调里做任何网络操作。
+- `SampleTimeCache`（`driver/src/SampleTimeCache.h`）：HAL 每个 IO 周期会为每个客户端各调一次 ReadInput，
+  时间戳相同；JitterBuffer 只能有一个读者，每帧只能消费一次。缓存按设备采样时间索引，同一段时间只从
+  JitterBuffer 取一次，各客户端拿到相同数据；设备时间跳变时重新开始。实时安全（预分配 16384 帧）。
+- `JitterBuffer::clear()`：写端立即清空（原 `requestReset()` 要等下一次 write 才生效，会让重新开始录音时
+  先播出上次残留的旧数据）。
+- 本阶段关闭漂移补偿（`driftCompensation = false`），阶段 4 再开。阶段 1 实测 M4→M2 漂移约 0.1 ppm。
+- 阶段 2 的测试音 `ToneGenerator` 已删除。
+- `install-driver.sh --set Key=Value`：安装时临时改 NetMicConfig（复制、修改、重新 ad-hoc 签名），
+  不用改源码重新构建。例如广播被拦时 `--set SenderAddress=192.168.1.4`。
+
+测试：
+- C++ 单元测试 42 个：新增 NetReceiver 4 个（本机 UDP 假发送端：未激活不发包；订阅 + Token + 心跳间隔 +
+  收包写入缓冲 + 丢包计数 + 取消订阅后清空；忽略其他来源和未激活时的包；广播发现 → 忽略错误格式 →
+  ANNOUNCE → 订阅 → 5 s 静默后重新发现）、SampleTimeCache 5 个、JitterBuffer::clear 1 个。
+- ThreadSanitizer：JitterBuffer 并发压力测试（加入了随机 clear）和 NetReceiver / SampleTimeCache 测试均无报告。
+- `scripts/e2e-local.sh`（已加入 `test-all.sh`）：真实 `netmic-sender --tone 440` 跑在本机回环端口，
+  构建好的 NetMic.driver 复制一份改成 `SenderAddress=127.0.0.1`，在进程内按 HAL 顺序加载，两个客户端、
+  按真实时间节拍跑 4 s 的 IO 周期。结果：两个客户端数据一致；最后 2 s 峰值 −12.04 dBFS、2 s 内 880 个周期、
+  相邻采样最大跳变等于正弦理论值（无断续）；sender 日志里看到订阅、取消订阅和 stop-grace 后停止。
+  驱动统计：790 包，丢包 0，欠载 0，过载 0，缓冲深度 19.7 ms（目标 20 ms）。
+- 顺带验证了广播发现跨机器可用：一次默认配置的冒烟测试（普通进程，不在沙盒里）自动发现了 M4（192.168.1.4），
+  1 s 收 153 包，丢包 0。所以 `test-all.sh` 改为只跑本机回环的端到端，避免测试时打开 M4 的麦克风。
+
+尚未验证：
+- 驱动在 coreaudiod 的沙盒里能否收发 UDP、能否广播（规格第 7 节的风险）。日志会在加载时打出
+  `network: socket ready ...`，失败会有 `socket()/bind()/sendto failed` 错误；广播被拦时用
+  `install-driver.sh --set SenderAddress=<M4 的 IP>` 退回单播。
+
+与规格的差异：
+- 规格要求"先在 M4 本机闭环（SenderAddress = 127.0.0.1），再部署到 M2"。开发机是 M2，本机闭环用
+  `e2e-local.sh` 在进程内完成；装进 coreaudiod 后直接用广播发现连 M4。
+
+人工验收记录（待填）：
+

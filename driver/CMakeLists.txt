@@ -15,7 +15,7 @@ set(NETMIC_SHARED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 set(NETMIC_VERSION 0.2.0)
 
 # Pure logic (no Core Audio / libASPL): shared by the plugin and the unit tests.
-add_library(netmic_core STATIC src/JitterBuffer.cpp src/ToneGenerator.cpp src/Config.cpp)
+add_library(netmic_core STATIC src/JitterBuffer.cpp src/Config.cpp src/NetReceiver.cpp src/Log.cpp)
 target_include_directories(netmic_core PUBLIC src ${NETMIC_SHARED_DIR})
 target_compile_options(netmic_core PRIVATE -Wall -Wextra)
 target_link_libraries(netmic_core PUBLIC "-framework CoreFoundation")
@@ -24,7 +24,7 @@ option(NETMIC_BUILD_TESTS "Build unit tests" ON)
 if(NETMIC_BUILD_TESTS)
   enable_testing()
   add_executable(netmic_tests tests/test_main.cpp tests/test_protocol.cpp tests/test_jitter_buffer.cpp
-                              tests/test_config.cpp tests/test_tone.cpp)
+                              tests/test_config.cpp tests/test_sample_time_cache.cpp tests/test_net_receiver.cpp)
   target_link_libraries(netmic_tests PRIVATE netmic_core)
   target_compile_definitions(netmic_tests PRIVATE NETMIC_TEST_VECTORS="${NETMIC_SHARED_DIR}/test_vectors.txt")
   target_compile_options(netmic_tests PRIVATE -Wall -Wextra)
