@@ -24,4 +24,16 @@ scp zs@192.168.1.2:/Users/zs/Dev/Claude/LANMic/sender/.build/release/netmic-send
 sender/.build/release/netmic-probe --discover | --record 10 --out test.wav | --stats 300   # M2
 ```
 
+## 当前可用（阶段 2：驱动只输出 440 Hz 测试音，不接网络）
+
+```bash
+scripts/build-all.sh             # 构建 driver/build/NetMic.driver（ad-hoc 签名）
+scripts/test-all.sh              # 含驱动冒烟测试：进程内加载 bundle，不需要 sudo
+scripts/install-driver.sh        # M2：安装并重启 coreaudiod（sudo，声音会中断几秒）
+scripts/uninstall-driver.sh      # M2：卸载并重启 coreaudiod
+scripts/logs.sh [-v]             # 驱动日志（-v 含 libASPL 逐操作跟踪）
+```
+
+配置在 `driver/Info.plist.in` 的 `NetMicConfig` 字典里（DeviceName、SenderAddress、Port、TargetLatencyMs、Channels、Token），改完重新构建并安装。
+
 完整的构建、安装、使用说明将在最后阶段补全。

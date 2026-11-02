@@ -15,23 +15,22 @@ fi
 (cd "$ROOT/sender" && swift test ${SWIFT_TEST_FLAGS[@]+"${SWIFT_TEST_FLAGS[@]}"})
 
 echo "==> C++ tests (driver)"
-if command -v cmake >/dev/null; then
-    cmake -S "$ROOT/driver" -B "$ROOT/driver/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
-    cmake --build "$ROOT/driver/build" --target netmic_tests -j
-    "$ROOT/driver/build/netmic_tests"
-else
-    echo "(cmake not found — building tests directly with clang++; 'brew install cmake' is needed for the driver)"
-    mkdir -p "$ROOT/driver/build"
-    clang++ -std=c++17 -O2 -Wall -Wextra -I"$ROOT/shared" -I"$ROOT/driver/src" \
-        -DNETMIC_TEST_VECTORS="\"$ROOT/shared/test_vectors.txt\"" \
-        "$ROOT/driver/src/JitterBuffer.cpp" "$ROOT"/driver/tests/*.cpp -o "$ROOT/driver/build/netmic_tests"
-    "$ROOT/driver/build/netmic_tests"
+if ! command -v cmake >/dev/null; then
+    echo "cmake not found: brew install cmake" >&2
+    exit 1
 fi
+cmake -S "$ROOT/driver" -B "$ROOT/driver/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
+cmake --build "$ROOT/driver/build" -j
+"$ROOT/driver/build/netmic_tests"
+
+echo "==> driver smoke test (loads NetMic.driver in-process, no coreaudiod)"
+"$ROOT/driver/build/netmic_plugin_smoke" "$ROOT/driver/build/NetMic.driver"
 
 if [[ "${TSAN:-0}" == 1 ]]; then
     echo "==> C++ concurrency test under ThreadSanitizer"
     clang++ -std=c++17 -O1 -g -fsanitize=thread -I"$ROOT/shared" -I"$ROOT/driver/src" \
         -DNETMIC_TEST_VECTORS="\"$ROOT/shared/test_vectors.txt\"" \
-        "$ROOT/driver/src/JitterBuffer.cpp" "$ROOT"/driver/tests/*.cpp -o "$ROOT/driver/build/netmic_tests_tsan"
+        "$ROOT/driver/src/JitterBuffer.cpp" "$ROOT/driver/tests/test_main.cpp" \
+        "$ROOT/driver/tests/test_jitter_buffer.cpp" -o "$ROOT/driver/build/netmic_tests_tsan"
     "$ROOT/driver/build/netmic_tests_tsan" concurrent
 fi

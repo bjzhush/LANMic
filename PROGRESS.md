@@ -67,7 +67,7 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 - **与规格的偏差**：深度平滑时间常数用 **2 s**（规格写“约 1 秒”）。1 s 时包粒度（240 帧）和抖动带来的测量噪声会让修正比例波动约 ±270 ppm；2 s 时降到约 ±150–240 ppm，收敛时间仍在 16–18 s，满足 10–30 s 的要求。±300 ppm 的音高变化约 0.005 个半音，听不出来。参数在 `JitterBufferConfig` 中可调。
 - 欠载 / 过载 / 重置时都保留积分项（它就是两台机器时钟偏差的估计值）。
 
-## 阶段 1：网络链路 —— 已完成，待人工验收
+## 阶段 1：网络链路 —— 已完成，用户验收通过（2026-11-02）
 
 完成内容：
 - `netmic-sender`：设备枚举（`--list-devices`）、按名称子串或 UID 选设备、只设置 inputNode 的 `CurrentDevice`（不改系统默认输入）、
@@ -106,3 +106,44 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
   - 漂移 +0.1 ppm，小于预期的几 ppm；估计代码已复查，阶段 3 驱动的 PI 环运行时再对照。
 - 无订阅者后自动释放麦克风：sender `-v` 日志显示 `subscribers 0 | capture off`，发包数不再增加。
   （`capture off` 与 `capture: stopped` 日志在同一处设置；用户未在滚动的日志里找到该行，也未观察到菜单栏橙色指示点。）
+
+## 阶段 2：最小虚拟设备（不接网络）—— 已完成，待人工验收
+
+内容：
+- libASPL 以 git submodule 引入（`driver/third_party/libASPL`，固定在 tag v3.1.2），CMake `ExternalProject` 构建为静态库。
+  按约定先读了 README 与 `examples/SinewaveDevice`、`NetcatDevice`，以实际 API 为准。
+- `driver/src/`：
+  - `Plugin.cpp`：CFPlugIn 工厂 `NetMicEntryPoint`（工厂 UUID `2F6F90F6-0E39-466F-BF8E-04323C6F80E3`）。
+  - `NetMicDevice.{h,cpp}`：设备 "M4 Mic"（制造商 NetMic，UID `com.netmic.device.m4mic`，Virtual，48 kHz，
+    只有 1 个输入流，Float32 interleaved，带音量 / 静音控件），Latency 报告为目标缓冲帧数（默认 960）。
+    IO 回调只调用 `ToneGenerator`（无分配、无锁、无日志）；`OnStartIO` / `OnStopIO` 只改一个原子量（阶段 3 给网络线程用）。
+  - `ToneGenerator`：440 Hz、−12 dBFS 正弦，相位由设备采样时间算出，所以各客户端、各 IO 周期之间连续。
+  - `Config.{h,cpp}`：读取 bundle Info.plist 里的 `NetMicConfig`，每个键单独校验，非法值回落到默认并打 os_log 错误。
+  - `Log.h`：os_log，subsystem `com.netmic.driver`；category `driver` 是驱动自己的日志，`aspl` 是 libASPL 的逐操作跟踪（debug 级）。
+- `driver/Info.plist.in`：CFPlugIn 键、`AudioServerPlugIn_Network = true`、`sandboxSafe`、`NetMicConfig` 默认值。
+- 构建产物 `driver/build/NetMic.driver`，构建后自动 ad-hoc 签名（环境变量 `CODESIGN_IDENTITY` 可改用证书）。
+- 脚本：`scripts/install-driver.sh`、`uninstall-driver.sh`（都在 M2 本机运行，内部用 sudo）、`logs.sh [-v]`。
+  安装 / 卸载后会等待并检查设备是否出现 / 消失。
+- 测试：新增 7 个单元测试（配置解析 5 个、测试音 2 个），C++ 共 34 个。
+  新增 `netmic_plugin_smoke`：在进程内加载 NetMic.driver，按 HAL 的顺序调用工厂 → Initialize → 属性查询 →
+  AddDeviceClient → StartIO → 100 个 IO 周期 → StopIO，检查设备名、UID、制造商、传输类型、延迟、采样率、
+  流方向和格式，以及输出是连续的 −12 dBFS 440 Hz 正弦。不需要 sudo，也不碰 coreaudiod，`test-all.sh` 会跑它。
+
+与规格的差异：
+- 规格要求"先在 M4 本机安装测试，再部署到 M2"。开发机就是 M2，所以直接在 M2 安装（见「环境」）。
+- libASPL 的 IO 入口（`Device::DoIOOperation` 等）内部持有一个 `std::mutex`（ioMutex_），只与 StartIO / StopIO
+  等控制操作竞争。这是 libASPL 自身的设计（roc-vad 同样如此），我们自己的 IO 代码不加锁。
+
+踩到的问题：
+- 生成的 `Info.plist` 原本放在 `driver/build/` 根目录，CoreFoundation 会把 `build/` 当成同目录测试程序的主 bundle，
+  导致 `CFBundleCreate(build/NetMic.driver)` 返回空。改为生成到 `build/plist/Info.plist`。
+- zsh 里 `log` 是内建命令，查看系统日志要写 `/usr/bin/log`（脚本里已这样写）。
+
+本机检查结果（2026-11-02，M2，未安装到系统）：
+- 单元测试 34 个、冒烟测试 3 个全部通过；TSan 并发测试通过。
+- bundle：`Mach-O 64-bit bundle arm64`，minos 13.0，只依赖 CoreFoundation / CoreAudio / libc++ / libSystem，
+  `codesign --verify --strict` 通过（adhoc），`plutil -lint` 通过。
+- 冒烟测试时 os_log 正常输出 `loading: device "M4 Mic", 1 ch, target 20 ms ...`，无配置警告。
+
+人工验收记录（待填）：
+

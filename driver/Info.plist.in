@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>NetMic</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.netmic.driver</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>NetMic</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@NETMIC_VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@NETMIC_VERSION@</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>CFPlugInFactories</key>
+	<dict>
+		<key>2F6F90F6-0E39-466F-BF8E-04323C6F80E3</key>
+		<string>NetMicEntryPoint</string>
+	</dict>
+	<key>CFPlugInTypes</key>
+	<dict>
+		<!-- kAudioServerPlugInTypeUUID -->
+		<key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+		<array>
+			<string>2F6F90F6-0E39-466F-BF8E-04323C6F80E3</string>
+		</array>
+	</dict>
+	<key>AudioServerPlugIn_MachServices</key>
+	<array/>
+	<key>AudioServerPlugIn_Network</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>NetMic</string>
+	<key>NSPrincipalClass</key>
+	<string></string>
+	<key>sandboxSafe</key>
+	<true/>
+	<!-- Edit, then reinstall (scripts/install-driver.sh). See README. -->
+	<key>NetMicConfig</key>
+	<dict>
+		<key>DeviceName</key>
+		<string>M4 Mic</string>
+		<key>SenderAddress</key>
+		<string></string>
+		<key>Port</key>
+		<integer>47810</integer>
+		<key>TargetLatencyMs</key>
+		<integer>20</integer>
+		<key>Channels</key>
+		<integer>1</integer>
+		<key>Token</key>
+		<string></string>
+	</dict>
+</dict>
+</plist>
