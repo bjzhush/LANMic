@@ -28,9 +28,14 @@ void writePacket(JitterBuffer& jb, uint32_t stream, uint64_t index) {
     jb.write(stream, index * kFpp, pcm, kFpp);
 }
 
+// Margin 448 + a kIo (512) read = 960 frames effective target: playback
+// starts once 960 frames are buffered, and an overrun skips to 960 behind the head.
+constexpr uint32_t kMargin = 960 - kIo;
+
 JitterBufferConfig fixedRatio() {
     JitterBufferConfig c;
     c.driftCompensation = false;  // exact sample-for-sample output
+    c.targetFrames = kMargin;
     return c;
 }
 
@@ -80,7 +85,8 @@ TEST(jb_normal_sequence) {
 
 TEST(jb_out_of_order_packets_reassembled) {
     JitterBuffer jb(fixedRatio());
-    for (uint64_t k : {0, 1, 3, 2, 5, 4, 6, 7, 8}) writePacket(jb, 1, k);
+    // 11 packets = 2640 >= margin + 2048-frame read.
+    for (uint64_t k : {0, 1, 3, 2, 5, 4, 6, 7, 8, 10, 9}) writePacket(jb, 1, k);
     float out[2048];
     jb.read(out, 2048);
     CHECK(isRamp(out, 2048, 0));
@@ -89,7 +95,7 @@ TEST(jb_out_of_order_packets_reassembled) {
 
 TEST(jb_lost_packet_zero_filled) {
     JitterBuffer jb(fixedRatio());
-    for (uint64_t k : {0, 1, 3, 4, 5, 6, 7, 8, 9}) writePacket(jb, 1, k);  // packet 2 lost
+    for (uint64_t k : {0, 1, 3, 4, 5, 6, 7, 8, 9, 10}) writePacket(jb, 1, k);  // packet 2 lost
     float out[2048];
     jb.read(out, 2048);
     CHECK(isRamp(out, 480, 0));
@@ -216,6 +222,33 @@ TEST(jb_request_reset) {
     for (uint64_t k = 11; k < 15; ++k) writePacket(jb, 1, k);
     jb.read(out, kIo);
     CHECK(isRamp(out, kIo, 2400));
+}
+
+TEST(jb_target_adapts_to_read_size) {
+    // The margin is kept above whatever the client reads: a large IO buffer
+    // (4096 frames) must not underrun on every cycle.
+    JitterBufferConfig c = fixedRatio();
+    c.targetFrames = 960;
+    JitterBuffer jb(c);
+    std::vector<float> out(4096);
+    uint64_t written = 0;
+    for (; written * kFpp < 4096 + 960 - kFpp; ++written) writePacket(jb, 1, written);
+    jb.read(out.data(), 4096);
+    CHECK(isSilent(out.data(), 4096));  // 4800 < 4096 + 960
+    writePacket(jb, 1, written++);
+    jb.read(out.data(), 4096);
+    CHECK(isRamp(out.data(), 4096, 0));
+    CHECK(std::fabs(jb.stats().depthFrames - (written * kFpp - 4096.0)) < 1);
+    uint64_t readPos = 4096;
+    bool ok = true;
+    for (int cycle = 0; cycle < 100; ++cycle) {  // steady stream, one IO buffer per cycle
+        while (written * kFpp < readPos + 4096 + 960) writePacket(jb, 1, written++);
+        jb.read(out.data(), 4096);
+        ok = ok && isRamp(out.data(), 4096, readPos);
+        readPos += 4096;
+    }
+    CHECK(ok);
+    CHECK(jb.stats().underruns == 0);
 }
 
 TEST(jb_clear_empties_immediately) {

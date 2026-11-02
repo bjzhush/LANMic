@@ -11,6 +11,8 @@ let usage = """
 
     Without --sender the sender is found by UDP broadcast. Ctrl-C ends a
     recording / stats run early (the file is still written).
+    --trace <file.csv> (with --record / --stats) writes one line per AUDIO packet:
+    seq,streamId,samplePos,arrival (arrival = host uptime seconds) for driver/tools/replay.
     """
 
 func fail(_ message: String) -> Never {
@@ -40,6 +42,7 @@ func takeValue(_ flag: String) -> String {
 var mode: Mode?
 var recordSeconds: Double?
 var outPath: String?
+var tracePath: String?
 var senderIP: String?
 var port = NetMic.defaultPort
 var token = Token.zero
@@ -50,6 +53,7 @@ while !args.isEmpty {
     case "--discover": mode = .discover
     case "--record": recordSeconds = need(Double(takeValue(a)).flatMap { $0 > 0 ? $0 : nil }, "bad --record")
     case "--out": outPath = takeValue(a)
+    case "--trace": tracePath = takeValue(a)
     case "--stats": mode = .stats(seconds: need(Double(takeValue(a)).flatMap { $0 > 0 ? $0 : nil }, "bad --stats"))
     case "--sender": senderIP = takeValue(a)
     case "--port": port = need(UInt16(takeValue(a)), "bad --port")
@@ -142,6 +146,8 @@ func session(sender: SocketAddress, seconds: Double, recordTo path: String?) {
     var streamBase: Int?     // recording index of samplePos 0 for the current stream
     var currentStream: UInt32?
     var stats = ReceiverStats()
+    var trace = ""
+    if tracePath != nil { trace.reserveCapacity(Int(seconds) * 200 * 40) }
 
     var subSeq: UInt32 = 0
     var lastSubscribe = -1.0
@@ -173,6 +179,7 @@ func session(sender: SocketAddress, seconds: Double, recordTo path: String?) {
             print(String(format: "first audio after %.0f ms", (arrival - start) * 1000))
         }
         stats.record(seq: h.seq, streamId: h.streamId, samplePos: h.samplePos, arrival: arrival)
+        if tracePath != nil { trace += "\(h.seq),\(h.streamId),\(h.samplePos),\(String(format: "%.6f", arrival))\n" }
 
         guard path != nil else { continue }
         if currentStream != h.streamId {
@@ -192,6 +199,14 @@ func session(sender: SocketAddress, seconds: Double, recordTo path: String?) {
     print("— final —")
     print(statsLine(stats, elapsed: elapsed))
 
+    if let tracePath {
+        do {
+            try ("seq,streamId,samplePos,arrival\n" + trace).write(toFile: tracePath, atomically: true, encoding: .utf8)
+            print("wrote trace \(tracePath)")
+        } catch {
+            fail("writing \(tracePath): \(error)")
+        }
+    }
     if let path {
         do {
             try writeWAV(Array(recording.prefix(recorded)), sampleRate: NetMic.sampleRate, to: path)

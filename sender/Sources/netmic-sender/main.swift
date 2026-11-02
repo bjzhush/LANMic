@@ -7,12 +7,15 @@ let usage = """
       netmic-sender --list-devices
       netmic-sender --device <name substring or UID> | --tone <Hz>
                     [--name "M4 Mic"] [--port 47810]
-                    [--channel 0|<n>|mix] [--gain-db 0] [--token <32 hex digits>]
+                    [--channel 0|<n>|mix] [--gain-db 0] [--io-frames 240] [--token <32 hex digits>]
                     [--always-on] [--stop-grace 5] [--allow-any-source] [-v]
 
     Captures only while at least one receiver is subscribed (unless --always-on);
     stops --stop-grace seconds after the last subscriber leaves.
     --tone sends a -12 dBFS sine instead of the microphone (for testing).
+    --io-frames asks the input device for this IO buffer size (frames at the
+    device rate; 0 = leave the device default). Smaller buffers make packets
+    leave evenly every 5 ms instead of in bursts, so the receiver needs less buffering.
     """
 
 func fail(_ message: String) -> Never {
@@ -40,6 +43,7 @@ var name = "M4 Mic"
 var port = NetMic.defaultPort
 var channel: Int32 = 0
 var gainDb: Float = 0
+var ioFrames: UInt32 = 240
 var token = Token.zero
 var alwaysOn = false
 var stopGrace = 5.0
@@ -58,6 +62,7 @@ while !args.isEmpty {
         let v = takeValue(a)
         channel = v == "mix" ? -1 : need(Int32(v).flatMap { $0 >= 0 ? $0 : nil }, "bad --channel \(v)")
     case "--gain-db": gainDb = need(Float(takeValue(a)), "bad --gain-db")
+    case "--io-frames": ioFrames = need(UInt32(takeValue(a)), "bad --io-frames")
     case "--token": token = need(Token(hex: takeValue(a)), "--token must be 32 hex digits")
     case "--always-on": alwaysOn = true
     case "--stop-grace": stopGrace = need(Double(takeValue(a)).flatMap { $0 >= 0 ? $0 : nil }, "bad --stop-grace")
@@ -109,7 +114,8 @@ if let toneHz {
         fail("microphone access denied — enable your terminal app in System Settings → Privacy & Security → Microphone")
     }
 
-    let capture = Capture(options: .init(deviceQuery: deviceQuery, channel: channel, gainDb: gainDb))
+    let capture = Capture(options: .init(deviceQuery: deviceQuery, channel: channel, gainDb: gainDb,
+                                          ioFrames: ioFrames))
     capture.log = { log($0) }
     source = capture
 }

@@ -88,3 +88,8 @@ if(NETMIC_BUILD_TESTS)
   add_dependencies(netmic_plugin_smoke NetMic)
   add_test(NAME netmic_plugin_smoke COMMAND netmic_plugin_smoke $<TARGET_BUNDLE_DIR:NetMic>)
 endif()
+
+# Replays a netmic-probe --trace through the JitterBuffer to choose the buffer target.
+add_executable(netmic_replay tools/replay.cpp)
+target_link_libraries(netmic_replay PRIVATE netmic_core)
+target_compile_options(netmic_replay PRIVATE -Wall -Wextra)

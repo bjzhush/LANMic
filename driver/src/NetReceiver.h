@@ -60,6 +60,7 @@ private:
     void sendDiscover();
     void dropSender(const char* why);
     void logStats(const char* prefix);
+    void logBufferEvents(double now);
 
     const Config config_;
     JitterBuffer& buffer_;
@@ -80,6 +81,11 @@ private:
     uint32_t streamId_ = 0;
     uint32_t nextSeq_ = 0;
     uint32_t controlSeq_ = 0;
+    // For stats deltas and buffer event lines.
+    NetReceiverStats loggedNet_;
+    JitterBufferStats loggedBuffer_;
+    uint64_t seenUnderruns_ = 0, seenOverruns_ = 0;
+    double lastEventLog_ = 0;
 
     std::atomic<uint64_t> statAudio_{0}, statLost_{0}, statReordered_{0}, statIgnored_{0}, statSendErrors_{0};
 };

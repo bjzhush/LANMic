@@ -27,6 +27,8 @@ namespace netmic {
 struct JitterBufferConfig {
     uint32_t sampleRate = 48000;
     uint32_t capacityFrames = 24000;      // 500 ms
+    // Jitter margin: the reader aims to have this much buffered beyond what the
+    // current read() takes, so the effective depth adapts to the client's IO size.
     uint32_t targetFrames = 960;          // 20 ms
     uint32_t overrunMarginFrames = 2880;  // 60 ms above target
     bool driftCompensation = true;
@@ -48,7 +50,7 @@ struct JitterBufferStats {
     uint64_t resets = 0;       // writer-side resets (stream change, out of window, requested)
     uint64_t underruns = 0;
     uint64_t overruns = 0;
-    double depthFrames = 0;    // smoothed depth seen by the reader
+    double depthFrames = 0;    // smoothed depth seen by the reader, minus the read size (≈ targetFrames)
     double ratioPpm = 0;       // current resampling correction
     bool playing = false;
 };

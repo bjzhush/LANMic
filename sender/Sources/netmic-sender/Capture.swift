@@ -10,12 +10,13 @@ import NetMicProtocol
 /// gain, Int16, 240-frame blocks) → `onBlock`.
 ///
 /// installTap is not used: its buffers are 100–400 ms, far over the latency budget.
-/// The sink node receives buffers at the device IO size (~10 ms).
+/// The sink node receives buffers at the device IO size (240 frames = 5 ms by default, see --io-frames).
 final class Capture {
     struct Options {
         var deviceQuery: String
         var channel: Int32  // -1 = mix all channels
         var gainDb: Float
+        var ioFrames: UInt32  // requested device IO buffer size; 0 = device default
     }
 
     /// Called on the packetizer thread for every 240-frame block.
@@ -31,10 +32,14 @@ final class Capture {
     private var worker: Worker?
     private var configObserver: NSObjectProtocol?
     private var retryScheduled = false
+    private var lastStartError: String?  // logged once until it changes or capture starts
     private var configChangePending = false
     private var startedDevice: AudioDeviceID = 0
     private var startedFormat: (rate: Double, channels: AVAudioChannelCount) = (0, 0)
     private var lastStart: DispatchTime = .now()
+    private var watchdog: DispatchSourceTimer?
+    private var watchdogBlocks: UInt64 = 0
+    private var watchdogStalledSince: DispatchTime?
 
     private let statsLock = NSLock()
     private var levelSumSquares: Double = 0
@@ -43,7 +48,18 @@ final class Capture {
     private var blocks: UInt64 = 0
     private var running = false
 
-    init(options: Options) { self.options = options }
+    init(options: Options) {
+        self.options = options
+        // Watchdog: the engine can stop delivering audio without a configuration
+        // change notification (sleep/wake, device unplugged). If capture should be
+        // running but no block arrived for 2 s, rebuild it; while the device is
+        // missing, startEngine fails and the 1 s retry takes over.
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in self?.checkWatchdog() }
+        timer.resume()
+        watchdog = timer
+    }
 
     func start() { queue.async { self.wantRunning = true; self.ensureState() } }
     func stop() { queue.async { self.wantRunning = false; self.ensureState() } }
@@ -70,13 +86,39 @@ final class Capture {
         if wantRunning && engine == nil {
             do {
                 try startEngine()
+                lastStartError = nil
             } catch {
-                log("capture: \(error) — retrying in 1 s")
+                let message = "\(error)"
+                if message != lastStartError { log("capture: \(message) — retrying every 1 s") }
+                lastStartError = message
                 scheduleRetry()
             }
         } else if !wantRunning && engine != nil {
             stopEngine()
             log("capture: stopped (microphone released)")
+        } else if !wantRunning {
+            lastStartError = nil
+        }
+    }
+
+    private func checkWatchdog() {
+        guard wantRunning, engine != nil else {
+            watchdogStalledSince = nil
+            return
+        }
+        let blocks = statsLock.withLock { self.blocks }
+        if blocks != watchdogBlocks {
+            watchdogBlocks = blocks
+            watchdogStalledSince = nil
+            return
+        }
+        let since = watchdogStalledSince ?? .now()
+        watchdogStalledSince = since
+        if Double(DispatchTime.now().uptimeNanoseconds - since.uptimeNanoseconds) / 1e9 >= 2 {
+            log("capture: no audio for 2 s (engine running: \(engine?.isRunning == true ? "yes" : "no")) — restarting")
+            watchdogStalledSince = nil
+            stopEngine()
+            ensureState()
         }
     }
 
@@ -111,6 +153,7 @@ final class Capture {
         let st = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                       &devID, UInt32(MemoryLayout<AudioDeviceID>.size))
         guard st == noErr else { throw CaptureError(description: "selecting device failed (OSStatus \(st))") }
+        let ioFrames = setBufferFrameSize(device.id, options.ioFrames)
 
         let hw = input.inputFormat(forBus: 0)
         guard hw.sampleRate > 0, hw.channelCount > 0,
@@ -156,8 +199,9 @@ final class Capture {
         startedFormat = (hw.sampleRate, hw.channelCount)
         lastStart = .now()
         statsLock.withLock { running = true }
-        log(String(format: "capture: started \"%@\" (%.0f Hz, %d ch, using %@), stream %08x", device.name,
-                   hw.sampleRate, hw.channelCount, channel < 0 ? "mix" : "channel \(channel)", worker.streamId))
+        log(String(format: "capture: started \"%@\" (%.0f Hz, %d ch, using %@, IO %u frames), stream %08x",
+                   device.name, hw.sampleRate, hw.channelCount, channel < 0 ? "mix" : "channel \(channel)",
+                   ioFrames, worker.streamId))
     }
 
     /// AVAudioEngineConfigurationChange also fires for changes that need no action
@@ -222,6 +266,30 @@ final class Capture {
 
 func dbfs(_ x: Float) -> Float { x > 0 ? 20 * log10f(x) : -120 }
 
+/// Asks for `frames` as this process's IO buffer size on `device` (the HAL keeps
+/// it per process), clamped to the device's range. Returns the size in effect.
+private func setBufferFrameSize(_ device: AudioDeviceID, _ frames: UInt32) -> UInt32 {
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize,
+                                          mScope: kAudioObjectPropertyScopeGlobal,
+                                          mElement: kAudioObjectPropertyElementMain)
+    if frames > 0 {
+        var rangeAddr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSizeRange,
+                                                   mScope: kAudioObjectPropertyScopeGlobal,
+                                                   mElement: kAudioObjectPropertyElementMain)
+        var range = AudioValueRange()
+        var size = UInt32(MemoryLayout<AudioValueRange>.size)
+        var want = frames
+        if AudioObjectGetPropertyData(device, &rangeAddr, 0, nil, &size, &range) == noErr {
+            want = UInt32(min(max(Double(frames), range.mMinimum), range.mMaximum))
+        }
+        AudioObjectSetPropertyData(device, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &want)
+    }
+    var actual: UInt32 = 0
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &actual)
+    return actual
+}
+
 /// Packetizer thread: drains the ring, converts to 48 kHz, applies gain and emits 240-frame Int16 blocks.
 private final class Worker {
     let streamId = UInt32.random(in: 1...UInt32.max)
@@ -274,7 +342,7 @@ private final class Worker {
         while !shouldStop {
             let n = Int(scratch.withUnsafeMutableBufferPointer { nm_ring_read(ring, $0.baseAddress!, UInt32(chunk)) })
             if n == 0 {
-                usleep(2000)
+                usleep(1000)
                 continue
             }
             if let converter {

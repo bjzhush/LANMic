@@ -99,7 +99,10 @@ void JitterBuffer::writeImpl(uint32_t streamId, uint64_t samplePos, const Sample
 
 void JitterBuffer::read(float* out, uint32_t frames) {
     if (out == nullptr || frames == 0) return;
-    const double target = config_.targetFrames;
+    // The depth seen just before a read must cover the read itself plus the
+    // jitter margin, whatever IO size the client uses.
+    const int64_t targetFrames = static_cast<int64_t>(config_.targetFrames) + frames;
+    const double target = static_cast<double>(targetFrames);
 
     const uint64_t gen = generation_.load(std::memory_order_acquire);
     if (gen != readerGeneration_) {
@@ -115,13 +118,14 @@ void JitterBuffer::read(float* out, uint32_t frames) {
 
     auto silence = [&] { std::fill(out, out + frames, 0.0f); };
     auto publish = [&](double ratio) {
-        statDepth_.store(playing_ ? smoothedDepth_ : depth, std::memory_order_relaxed);
+        // Reported as the margin above this read, comparable to config_.targetFrames.
+        statDepth_.store((playing_ ? smoothedDepth_ : depth) - frames, std::memory_order_relaxed);
         statRatioPpm_.store((ratio - 1.0) * 1e6, std::memory_order_relaxed);
         statPlaying_.store(playing_, std::memory_order_relaxed);
     };
 
     if (!playing_) {
-        if (avail >= config_.targetFrames && avail > frames) {
+        if (avail >= targetFrames) {
             playing_ = true;
             frac_ = 0;
             depth = static_cast<double>(avail);
@@ -135,8 +139,8 @@ void JitterBuffer::read(float* out, uint32_t frames) {
 
     int64_t base = r;
     if (depth > target + config_.overrunMarginFrames) {
-        base = w - static_cast<int64_t>(config_.targetFrames);
-        avail = config_.targetFrames;
+        base = w - targetFrames;
+        avail = targetFrames;
         frac_ = 0;
         depth = smoothedDepth_ = target;
         statOverruns_.fetch_add(1, std::memory_order_relaxed);

@@ -32,7 +32,7 @@ AudioStreamBasicDescription floatFormat(uint32_t channels) {
 static JitterBufferConfig bufferConfig(const Config& config) {
     JitterBufferConfig c;
     c.targetFrames = config.targetFrames();
-    c.driftCompensation = false;  // stage 4
+    c.driftCompensation = true;
     return c;
 }
 
