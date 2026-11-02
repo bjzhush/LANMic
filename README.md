@@ -37,4 +37,19 @@ scripts/logs.sh [-v]             # 驱动日志（-v 含 libASPL 逐操作跟踪
 
 配置在 `driver/Info.plist.in` 的 `NetMicConfig` 字典里（DeviceName、SenderAddress、Port、TargetLatencyMs、Channels、Token），改完重新构建并安装；或者安装时用 `--set 键=值` 临时覆盖。
 
+### 网络：建议有线
+
+两台 Mac 之间建议用有线网络。实测有线局域网下 20 ms 缓冲（默认 `TargetLatencyMs=20`）一小时只有 1 次欠载；
+Wi-Fi 的包会成批到达并且会丢包，同样的缓冲会断断续续。
+
+- 驱动通过广播在所有网卡上找发送端：有线断开而 Wi-Fi 还在时，会自动改走 Wi-Fi；当前路径 5 s 收不到音频时会重新广播，这时有线通了就会回到有线
+  （实测有线恢复后约 30 s 切回）。
+- 一定要用 Wi-Fi 时，把缓冲加大，延迟会相应增加约 40 ms：
+
+  ```bash
+  scripts/install-driver.sh --set TargetLatencyMs=60
+  ```
+
+  缓冲只能吸收到达时间的抖动，Wi-Fi 上真正丢掉的包仍然会变成短暂的静音。
+
 完整的构建、安装、使用说明将在最后阶段补全。

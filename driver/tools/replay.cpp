@@ -86,7 +86,7 @@ void lateness(const std::vector<Packet>& pk) {
 }
 
 struct Result {
-    uint64_t underruns = 0, overruns = 0;
+    uint64_t underruns = 0, overruns = 0, catchUps = 0;
     double minDepth = 1e9, maxDepth = 0, sumDepth = 0, sumAbsPpm = 0;
     uint64_t reads = 0;
 };
@@ -122,6 +122,7 @@ Result run(const std::vector<Packet>& pk, uint32_t targetFrames, uint32_t ioFram
     auto s = jb.stats();
     r.underruns = s.underruns;
     r.overruns = s.overruns;
+    r.catchUps = s.catchUps;
     return r;
 }
 
@@ -155,7 +156,7 @@ int main(int argc, char** argv) {
     }
     lateness(pk);
     std::printf("\nreader: %u frames every %.2f ms; 16 phases per row\n", ioFrames, ioFrames / 48.0);
-    std::printf("target  drift  underruns  overruns  depth min/mean/max (ms)  mean |ratio| ppm\n");
+    std::printf("target  drift  underruns  overruns  catch-ups  depth min/mean/max (ms)  mean |ratio| ppm\n");
     for (bool d : drifts) {
         for (int t : targets) {
             Result total;
@@ -164,14 +165,15 @@ int main(int argc, char** argv) {
                 Result r = run(pk, t * 48, ioFrames, d, ph / 16.0);
                 total.underruns += r.underruns;
                 total.overruns += r.overruns;
+                total.catchUps += r.catchUps;
                 total.minDepth = std::min(total.minDepth, r.minDepth);
                 total.maxDepth = std::max(total.maxDepth, r.maxDepth);
                 total.sumDepth += r.sumDepth;
                 total.sumAbsPpm += r.sumAbsPpm;
                 total.reads += r.reads;
             }
-            std::printf("%4d ms  %-5s  %9llu  %8llu  %6.1f / %5.1f / %5.1f     %8.1f\n", t, d ? "on" : "off",
-                        (unsigned long long)total.underruns, (unsigned long long)total.overruns,
+            std::printf("%4d ms  %-5s  %9llu  %8llu  %9llu  %6.1f / %5.1f / %5.1f     %8.1f\n", t, d ? "on" : "off",
+                        (unsigned long long)total.underruns, (unsigned long long)total.overruns, (unsigned long long)total.catchUps,
                         total.minDepth / 48, total.sumDepth / total.reads / 48, total.maxDepth / 48,
                         total.sumAbsPpm / total.reads);
         }

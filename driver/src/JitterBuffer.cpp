@@ -109,6 +109,7 @@ void JitterBuffer::read(float* out, uint32_t frames) {
         readerGeneration_ = gen;
         playing_ = false;
         frac_ = 0;
+        excessSec_ = 0;
     }
 
     const int64_t r = readPos_.load(std::memory_order_acquire);
@@ -131,6 +132,7 @@ void JitterBuffer::read(float* out, uint32_t frames) {
             depth = static_cast<double>(avail);
             smoothedDepth_ = depth;
         } else {
+            excessSec_ = 0;
             silence();
             publish(1.0);
             return;
@@ -143,12 +145,39 @@ void JitterBuffer::read(float* out, uint32_t frames) {
         avail = targetFrames;
         frac_ = 0;
         depth = smoothedDepth_ = target;
+        excessSec_ = 0;
         statOverruns_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    const double dt = static_cast<double>(frames) / config_.sampleRate;
+    if (config_.driftCompensation && config_.catchUpMarginFrames > 0) {
+        const double excess = depth - target;
+        if (excess > config_.catchUpMarginFrames) {
+            if (excessSec_ == 0) {
+                minExcess_ = excess;
+                integralBeforeExcess_ = integral_;
+            }
+            minExcess_ = std::min(minExcess_, excess);
+            excessSec_ += dt;
+            if (excessSec_ >= config_.catchUpSec) {
+                // Drop the part of the surplus that was there the whole time; the
+                // integral wound up during the surplus is not drift, so undo it.
+                const int64_t skip = static_cast<int64_t>(minExcess_);
+                base += skip;
+                avail -= skip;
+                depth -= static_cast<double>(skip);
+                smoothedDepth_ = depth;
+                integral_ = integralBeforeExcess_;
+                excessSec_ = 0;
+                statCatchUps_.fetch_add(1, std::memory_order_relaxed);
+            }
+        } else {
+            excessSec_ = 0;
+        }
     }
 
     double ratio = 1.0;
     if (config_.driftCompensation) {
-        const double dt = static_cast<double>(frames) / config_.sampleRate;
         const double alpha = 1.0 - std::exp(-dt / config_.smoothingTauSec);
         smoothedDepth_ += alpha * (depth - smoothedDepth_);
         const double err = smoothedDepth_ - target;
@@ -187,6 +216,7 @@ void JitterBuffer::read(float* out, uint32_t frames) {
         consumed = avail;
         frac_ = 0;
         playing_ = false;
+        excessSec_ = 0;
         statUnderruns_.fetch_add(1, std::memory_order_relaxed);
     } else {
         consumed = static_cast<int64_t>(p);
@@ -212,6 +242,7 @@ JitterBufferStats JitterBuffer::stats() const {
     s.resets = statResets_.load(std::memory_order_relaxed);
     s.underruns = statUnderruns_.load(std::memory_order_relaxed);
     s.overruns = statOverruns_.load(std::memory_order_relaxed);
+    s.catchUps = statCatchUps_.load(std::memory_order_relaxed);
     s.depthFrames = statDepth_.load(std::memory_order_relaxed);
     s.ratioPpm = statRatioPpm_.load(std::memory_order_relaxed);
     s.playing = statPlaying_.load(std::memory_order_relaxed);

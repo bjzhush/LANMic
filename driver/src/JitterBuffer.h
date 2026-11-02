@@ -41,6 +41,13 @@ struct JitterBufferConfig {
     double kp = 1.04e-5;  // per frame
     double ki = 1.30e-6;  // per frame·second
     double maxCorrectionPpm = 1000.0;
+
+    // Catch-up (drift compensation only): when the depth stays more than
+    // catchUpMarginFrames above target for catchUpSec (e.g. a network stall
+    // followed by a burst), the excess is dropped in one step instead of being
+    // drained at maxCorrectionPpm, which would take ~1 s per ms of excess.
+    uint32_t catchUpMarginFrames = 720;  // 15 ms; 0 disables
+    double catchUpSec = 0.5;
 };
 
 struct JitterBufferStats {
@@ -50,6 +57,7 @@ struct JitterBufferStats {
     uint64_t resets = 0;       // writer-side resets (stream change, out of window, requested)
     uint64_t underruns = 0;
     uint64_t overruns = 0;
+    uint64_t catchUps = 0;     // excess dropped after a sustained surplus
     double depthFrames = 0;    // smoothed depth seen by the reader, minus the read size (≈ targetFrames)
     double ratioPpm = 0;       // current resampling correction
     bool playing = false;
@@ -108,10 +116,13 @@ private:
     double frac_ = 0;  // fractional read position in [0, 1)
     double smoothedDepth_ = 0;
     double integral_ = 0;
+    double excessSec_ = 0;            // how long depth has been above target + catch-up margin
+    double minExcess_ = 0;            // smallest excess seen in that time (safe amount to drop)
+    double integralBeforeExcess_ = 0;
 
     // Stats (relaxed).
     std::atomic<uint64_t> statPackets_{0}, statLateDrops_{0}, statGapFrames_{0}, statResets_{0};
-    std::atomic<uint64_t> statUnderruns_{0}, statOverruns_{0};
+    std::atomic<uint64_t> statUnderruns_{0}, statOverruns_{0}, statCatchUps_{0};
     std::atomic<double> statDepth_{0}, statRatioPpm_{0};
     std::atomic<bool> statPlaying_{false};
 

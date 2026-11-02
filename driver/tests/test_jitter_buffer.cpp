@@ -292,7 +292,7 @@ struct DriftResult {
     double maxRatioDevPpm = 0;     // max |ratio - drift| after settleSec
     double maxErrAfterSettle = 0;  // |smoothed depth - target| after settleSec
     double settleTime = -1;        // time after which |err| stays < 48 frames (1 ms)
-    uint64_t underruns = 0, overruns = 0;
+    uint64_t underruns = 0, overruns = 0, catchUps = 0;
     float maxStep = 0;             // largest sample-to-sample jump in the output
 };
 
@@ -361,6 +361,7 @@ DriftResult simulateDrift(double driftPpm, double seconds, double settleSec, uin
     auto s = jb.stats();
     res.underruns = s.underruns - underrunsAtSettle;
     res.overruns = s.overruns - overrunsAtSettle;
+    res.catchUps = s.catchUps;
     res.settleTime = lastBad;
     return res;
 }
@@ -378,6 +379,7 @@ void checkDrift(double ppm) {
     CHECK_MSG(r.maxRatioDevPpm < 300.0, "ratio wobble %.0f ppm", r.maxRatioDevPpm);
     CHECK(r.underruns == 0);
     CHECK(r.overruns == 0);
+    CHECK_MSG(r.catchUps == 0, "%llu catch-ups from plain jitter", (unsigned long long)r.catchUps);
     // 440 Hz at amplitude 0.5 moves at most ~0.029 per sample; anything much
     // bigger would be an audible click.
     CHECK_MSG(r.maxStep < 0.035f, "max step %.4f", r.maxStep);
@@ -413,6 +415,72 @@ TEST(jb_drift_uncompensated_would_fail) {
 }
 
 // ---------------------------------------------------------------------------
+// Network stall then burst, as seen live (02:36:28): packets sent during a
+// 60 ms window all arrive at its end. The reader underruns, rebuffers, and the
+// burst then leaves the buffer far above target.
+
+namespace {
+
+struct StallResult {
+    double peakExcessMs = 0;   // max depth above target after the burst
+    double recoveredAt = -1;   // seconds after the stall until |depth - target| < 2 ms for good
+    uint64_t underruns = 0, overruns = 0, catchUps = 0;
+};
+
+StallResult simulateStall(uint32_t catchUpMarginFrames) {
+    JitterBufferConfig cfg;
+    cfg.catchUpMarginFrames = catchUpMarginFrames;
+    JitterBuffer jb(cfg);
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> jitter(0.0, 0.002);
+    const double stallAt = 30.0, stallEnd = 30.06, seconds = 120.0;
+    std::vector<std::pair<double, uint64_t>> arrivals;
+    for (uint64_t k = 0; (k + 1) * kFpp / 48000.0 < seconds; ++k) {
+        double t = (k + 1) * kFpp / 48000.0 + 0.001 + jitter(rng);
+        if (t >= stallAt && t < stallEnd) t = stallEnd;
+        arrivals.push_back({t, k});
+    }
+    std::sort(arrivals.begin(), arrivals.end());
+    StallResult res;
+    size_t next = 0;
+    float out[kIo];
+    double lastBad = stallAt;
+    for (double t = 0; t < seconds; t += kIo / 48000.0) {
+        while (next < arrivals.size() && arrivals[next].first <= t) {
+            int16_t pcm[kFpp] = {};
+            jb.write(1, arrivals[next].second * kFpp, pcm, kFpp);
+            ++next;
+        }
+        jb.read(out, kIo);
+        auto s = jb.stats();
+        if (t < stallAt) continue;
+        const double excessMs = (s.depthFrames - cfg.targetFrames) / 48.0;
+        res.peakExcessMs = std::max(res.peakExcessMs, excessMs);
+        if (!s.playing || std::fabs(excessMs) >= 2.0) lastBad = t;
+    }
+    auto s = jb.stats();
+    res.recoveredAt = lastBad - stallAt;
+    res.underruns = s.underruns;
+    res.overruns = s.overruns;
+    res.catchUps = s.catchUps;
+    return res;
+}
+
+}  // namespace
+
+TEST(jb_burst_after_stall_catches_up) {
+    StallResult r = simulateStall(JitterBufferConfig{}.catchUpMarginFrames);
+    StallResult slow = simulateStall(0);
+    std::printf("  stall+burst: catch-up recovers in %.1f s (peak +%.1f ms, %llu catch-up); "
+                "without: %.1f s (peak +%.1f ms)\n",
+                r.recoveredAt, r.peakExcessMs, (unsigned long long)r.catchUps, slow.recoveredAt,
+                slow.peakExcessMs);
+    CHECK_MSG(r.recoveredAt < 3.0, "recovered after %.1f s", r.recoveredAt);
+    CHECK(r.catchUps == 1);
+    CHECK(r.underruns <= 1);
+    CHECK(r.overruns == 0);
+    CHECK_MSG(slow.recoveredAt > 20.0, "without catch-up recovered after %.1f s", slow.recoveredAt);
+}
 
 TEST(jb_concurrent_stress) {
     // Real threads hammering write/read with stream switches and resets. Checks

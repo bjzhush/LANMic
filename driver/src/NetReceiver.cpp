@@ -140,11 +140,12 @@ void NetReceiver::logStats(const char* prefix) {
     const NetReceiverStats n = stats();
     NM_LOG("%{public}s: sender %{public}s | packets %llu lost %llu (+%llu) reordered %llu ignored %llu | "
            "buffer %{public}s depth %.1f ms (target %u ms) ratio %+.1f ppm | underruns %llu (+%llu) "
-           "overruns %llu (+%llu) gaps %llu frames late %llu resets %llu",
+           "overruns %llu (+%llu) catch-ups %llu (+%llu) gaps %llu frames late %llu resets %llu",
            prefix, haveSender_ ? senderName_.c_str() : "<none>", n.audioPackets, n.lostPackets,
            n.lostPackets - loggedNet_.lostPackets, n.reordered, n.ignored, b.playing ? "playing" : "buffering",
            b.depthFrames * 1000.0 / NETMIC_SAMPLE_RATE, config_.targetLatencyMs, b.ratioPpm, b.underruns,
-           b.underruns - loggedBuffer_.underruns, b.overruns, b.overruns - loggedBuffer_.overruns, b.gapFrames,
+           b.underruns - loggedBuffer_.underruns, b.overruns, b.overruns - loggedBuffer_.overruns, b.catchUps,
+           b.catchUps - loggedBuffer_.catchUps, b.gapFrames,
            b.lateDrops, b.resets);
     loggedNet_ = n;
     loggedBuffer_ = b;
@@ -155,12 +156,13 @@ void NetReceiver::logStats(const char* prefix) {
 void NetReceiver::logBufferEvents(double now) {
     if (now - lastEventLog_ < 1) return;
     const JitterBufferStats b = buffer_.stats();
-    if (b.underruns != seenUnderruns_ || b.overruns != seenOverruns_) {
-        NM_LOG("buffer: %llu underrun(s), %llu overrun(s) in the last %.0f s; depth now %.1f ms",
-               b.underruns - seenUnderruns_, b.overruns - seenOverruns_, std::min(now - lastEventLog_, 99.0),
-               b.depthFrames * 1000.0 / NETMIC_SAMPLE_RATE);
+    if (b.underruns != seenUnderruns_ || b.overruns != seenOverruns_ || b.catchUps != seenCatchUps_) {
+        NM_LOG("buffer: %llu underrun(s), %llu overrun(s), %llu catch-up(s) in the last %.0f s; depth now %.1f ms",
+               b.underruns - seenUnderruns_, b.overruns - seenOverruns_, b.catchUps - seenCatchUps_,
+               std::min(now - lastEventLog_, 99.0), b.depthFrames * 1000.0 / NETMIC_SAMPLE_RATE);
         seenUnderruns_ = b.underruns;
         seenOverruns_ = b.overruns;
+        seenCatchUps_ = b.catchUps;
     }
     lastEventLog_ = now;
 }
@@ -257,6 +259,7 @@ void NetReceiver::run() {
                 const JitterBufferStats b = buffer_.stats();
                 seenUnderruns_ = b.underruns;
                 seenOverruns_ = b.overruns;
+                seenCatchUps_ = b.catchUps;
                 lastEventLog_ = now;
             } else {
                 if (haveSender_) {

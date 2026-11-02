@@ -84,7 +84,7 @@ private:
     // For stats deltas and buffer event lines.
     NetReceiverStats loggedNet_;
     JitterBufferStats loggedBuffer_;
-    uint64_t seenUnderruns_ = 0, seenOverruns_ = 0;
+    uint64_t seenUnderruns_ = 0, seenOverruns_ = 0, seenCatchUps_ = 0;
     double lastEventLog_ = 0;
 
     std::atomic<uint64_t> statAudio_{0}, statLost_{0}, statReordered_{0}, statIgnored_{0}, statSendErrors_{0};
