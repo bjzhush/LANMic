@@ -6,8 +6,11 @@
 
 | 机器 | 系统 | 工具链 |
 |---|---|---|
-| M4（开发机，Mac mini M4） | macOS 27.0 (26A428) | 仅 Command Line Tools：Swift 6.4 (swiftlang-6.4.0.34.1)、Apple clang 21.0.0；无 Xcode；cmake 4.4.5（Homebrew） |
-| M2 | 待记录（`sw_vers`） | — |
+| M2（开发机兼接收端，Mac mini M2） | macOS 27.0 (26A428) | 仅 Command Line Tools：Swift 6.4 (swiftlang-6.4.0.34.1)、Apple clang 21.0.0；无 Xcode；cmake 4.4.5（Homebrew） |
+| M4（发送端） | 待记录（`sw_vers`） | — |
+
+**与规格的差异**：规格假定在 M4 上开发、用 `deploy-m2.sh` 推到 M2；实际开发机是 M2（2026-11-01 用户指出，此前记录误写为 M4）。
+因此驱动可在 M2 本机直接安装，需要拷贝的是 `netmic-sender` 到 M4。部署脚本的调整待与用户确认。
 
 ### 环境问题
 
@@ -36,7 +39,7 @@
 - `driver/CMakeLists.txt`：`netmic_core` 静态库 + `netmic_tests`。插件 bundle 与 libASPL submodule 留到阶段 2 再加。
 - `scripts/test-all.sh`：跑 Swift + C++ 测试；`TSAN=1` 时额外用 ThreadSanitizer 跑并发压力测试。
 
-测试结果（2026-11-01，M4）：
+测试结果（2026-11-01，M2）：
 - C++：27/27 通过（CMake 构建）。ThreadSanitizer 下并发压力测试无报告。
 - Swift：12/12 通过（修好 CLT 后，`scripts/test-all.sh` 用 `swift test` 从干净目录和增量两种方式各跑一次，均通过）。
 
@@ -79,12 +82,13 @@
   实时回调里只做降为单声道并写入 C 环形缓冲（无分配、无锁、无 Swift 运行时）；打包线程每 2 ms 取一次数据，做采样率转换（仅当设备不是 48 kHz 时用 AVAudioConverter）、增益、Int16、凑 240 帧发包。
   因此混合 / 选声道在重采样之前完成，转换器只处理单声道。
 
-本机测试（M4，`--tone 440`，回环 127.0.0.1）：
+本机测试（M2，`--tone 440`，回环 127.0.0.1）：
 - 单播 / 广播发现都正常；订阅后 7 ms 收到第一个音频包；stop-grace 到时停止发送。
 - 录 3 s：601 包，丢包 0，峰值 −12.04 dBFS，频率 440 Hz，相邻采样最大跳变 = 理论值（无断续）。
 - 统计 15 s：3001 包，丢包 0，抖动 0.5 ms。
-- **未测：真实麦克风采集路径**。这台 M4 当前没有接任何输入设备（`system_profiler SPAudioDataType` 只有扬声器），`--list-devices` 为空。需在人工验收中用外接麦克风验证。
+- **未测：真实麦克风采集路径**。开发机（M2）没有接任何输入设备（`system_profiler SPAudioDataType` 只有扬声器），`--list-devices` 为空。需在人工验收中用外接麦克风验证。
 
 人工验收记录（待填）：
-- M2 系统版本：
+- M2 系统版本：macOS 27.0 (26A428)
+- M4 系统版本：
 - 丢包率 / 抖动 / 漂移（`--stats 300`）：
