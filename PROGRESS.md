@@ -88,7 +88,17 @@
 - 统计 15 s：3001 包，丢包 0，抖动 0.5 ms。
 - **未测：真实麦克风采集路径**。开发机（M2）没有接任何输入设备（`system_profiler SPAudioDataType` 只有扬声器），`--list-devices` 为空。需在人工验收中用外接麦克风验证。
 
-人工验收记录（待填）：
+人工验收记录（2026-11-02）：
 - M2 系统版本：macOS 27.0 (26A428)
-- M4 系统版本：macOS 15.7.3 (24G419)
-- 丢包率 / 抖动 / 漂移（`--stats 300`）：
+- M4 系统版本：macOS 15.7.3 (24G419)；麦克风 UGREEN USB MIC-CM769（48 kHz，2 ch，取 channel 0）
+- 发现：正常。M4 有两块网卡在网，`192.168.1.4` 和 `192.168.6.112` 都应答。
+- 首次验收发现 bug：采集每 ~0.18 s 重启一次（stream 不断变化）。原因：在 inputNode 的 AudioUnit 上设置
+  `kAudioOutputUnitProperty_CurrentDevice` 后，约 65 ms 会收到一次 `AVAudioEngineConfigurationChange`，
+  旧代码收到即重启，形成循环。修复（`39c41b2`）：通知合并 300 ms；引擎仍在运行且设备、格式未变则忽略；
+  重启间隔 ≥ 1 s；日志打印状态。M4 上确认出现 `configuration change ignored`，之后不再重启。
+- 录音 10 s（`--record`）：回放正常，声音清楚（用户确认）。
+- `--stats 300`（M2 ← M4，`--sender 192.168.1.4`）：
+  `packets 60001  lost 0 (0.000%)  reordered 0  dup 0  jitter 5.29 ms  drift +0.1 ppm`。
+  - 抖动 5.3 ms 比回环（0.5 ms）高，主要是发送端成对发包：sink node 按 ~10 ms 的设备 IO 周期回调，
+    一次凑出两个 240 帧包连发。20 ms 的抖动缓冲目标足够吸收。
+  - 漂移 +0.1 ppm，小于预期的几 ppm；估计代码已复查，阶段 3 驱动的 PI 环运行时再对照。
