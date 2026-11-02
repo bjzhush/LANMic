@@ -107,7 +107,7 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 - 无订阅者后自动释放麦克风：sender `-v` 日志显示 `subscribers 0 | capture off`，发包数不再增加。
   （`capture off` 与 `capture: stopped` 日志在同一处设置；用户未在滚动的日志里找到该行，也未观察到菜单栏橙色指示点。）
 
-## 阶段 2：最小虚拟设备（不接网络）—— 已完成，待人工验收
+## 阶段 2：最小虚拟设备（不接网络）—— 已完成，用户验收通过（2026-11-02）
 
 内容：
 - libASPL 以 git submodule 引入（`driver/third_party/libASPL`，固定在 tag v3.1.2），CMake `ExternalProject` 构建为静态库。
@@ -148,5 +148,5 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 人工验收记录（2026-11-02，M2）：
 - 安装：`install-driver.sh` 成功，「系统设置 → 声音 → 输入」出现 "M4 Mic"。
 - QuickTime 选 M4 Mic 录 10 s：回放全程是稳定的嘟声，没有其他声音（用户确认）。
-- 卸载：待确认。
+- 卸载：`uninstall-driver.sh` 成功，M4 Mic 从输入列表消失。
 
