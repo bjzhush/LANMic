@@ -24,7 +24,7 @@
    （增量构建有时能过，容易误判）。解决：`swift test -Xswiftc -plugin-path -Xswiftc $(xcode-select -p)/usr/lib/swift/host/plugins/testing`，
    `scripts/test-all.sh` 已自动加上。
 
-## 阶段 0：骨架与纯逻辑 —— 已完成，待验收
+## 阶段 0：骨架与纯逻辑 —— 已完成，用户验收通过（2026-11-01）
 
 完成内容：
 - 仓库结构、`.gitignore`、`docs/protocol.md`。
@@ -62,4 +62,29 @@
 - **与规格的偏差**：深度平滑时间常数用 **2 s**（规格写“约 1 秒”）。1 s 时包粒度（240 帧）和抖动带来的测量噪声会让修正比例波动约 ±270 ppm；2 s 时降到约 ±150–240 ppm，收敛时间仍在 16–18 s，满足 10–30 s 的要求。±300 ppm 的音高变化约 0.005 个半音，听不出来。参数在 `JitterBufferConfig` 中可调。
 - 欠载 / 过载 / 重置时都保留积分项（它就是两台机器时钟偏差的估计值）。
 
-## 阶段 1：网络链路 —— 未开始
+## 阶段 1：网络链路 —— 已完成，待人工验收
+
+完成内容：
+- `netmic-sender`：设备枚举（`--list-devices`）、按名称子串或 UID 选设备、只设置 inputNode 的 `CurrentDevice`（不改系统默认输入）、
+  `--channel N|mix`、`--gain-db`、`--token`、按需启停（订阅 3 s 过期、`--stop-grace`）、`--always-on`、配置变化（拔插/采样率）自动重建并换 streamId、
+  设备丢失时每秒重试、`-v` 每 5 s 打印订阅者 / 发包数 / 电平。默认只接受私有地址段的请求（`--allow-any-source` 可关闭）。
+- `netmic-sender --tone <Hz>`（规格外新增）：用 −12 dBFS 正弦代替麦克风，按主机时钟节拍发送。用于无人说话 / 无麦克风时测试网络链路，阶段 2–3 也会用到。
+- `netmic-probe`：`--discover`、`--record N --out x.wav`、`--stats N`；统计收包、丢包（按 seq）、乱序、重复、RFC 3550 抖动、漂移 ppm（samplePos 对到达时间做最小二乘，需 ≥10 s 数据）。Ctrl-C 提前结束时照样写文件、发 UNSUBSCRIBE。
+- 广播发现同时发往 `255.255.255.255` 和每个网卡的子网广播地址（多网卡时受限广播只走主网卡）。
+- 新增模块：`NetMicKit`（UDP socket、接收统计，sender / probe 共用），`CNetMicSupport`（C 写的无锁环形缓冲，供采集实时回调使用）。新增 11 个单元测试（漂移估计、抖动、丢包/乱序/重复、声道选择/混合、溢出、回环收发）。
+- `scripts/build-all.sh`、`scripts/deploy-m2.sh`（阶段 1 只拷 probe；有驱动后同时安装驱动）。
+
+设计变更（相对规格 4.1）：
+- **采集不用 `installTap`，改用 `AVAudioSinkNode`**（仍是 AVAudioEngine）。Apple 文档写明 installTap 的缓冲范围是 100–400 ms，超出 50 ms 的延迟预算；sink node 按设备 IO 周期（约 10 ms）回调。
+  实时回调里只做降为单声道并写入 C 环形缓冲（无分配、无锁、无 Swift 运行时）；打包线程每 2 ms 取一次数据，做采样率转换（仅当设备不是 48 kHz 时用 AVAudioConverter）、增益、Int16、凑 240 帧发包。
+  因此混合 / 选声道在重采样之前完成，转换器只处理单声道。
+
+本机测试（M4，`--tone 440`，回环 127.0.0.1）：
+- 单播 / 广播发现都正常；订阅后 7 ms 收到第一个音频包；stop-grace 到时停止发送。
+- 录 3 s：601 包，丢包 0，峰值 −12.04 dBFS，频率 440 Hz，相邻采样最大跳变 = 理论值（无断续）。
+- 统计 15 s：3001 包，丢包 0，抖动 0.5 ms。
+- **未测：真实麦克风采集路径**。这台 M4 当前没有接任何输入设备（`system_profiler SPAudioDataType` 只有扬声器），`--list-devices` 为空。需在人工验收中用外接麦克风验证。
+
+人工验收记录（待填）：
+- M2 系统版本：
+- 丢包率 / 抖动 / 漂移（`--stats 300`）：
