@@ -150,7 +150,7 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 - QuickTime 选 M4 Mic 录 10 s：回放全程是稳定的嘟声，没有其他声音（用户确认）。
 - 卸载：`uninstall-driver.sh` 成功，M4 Mic 从输入列表消失。
 
-## 阶段 3：接入网络 —— 已完成，待人工验收
+## 阶段 3：接入网络 —— 已完成，用户验收通过（2026-11-02）
 
 内容：
 - `NetReceiver`（`driver/src/NetReceiver.{h,cpp}`）：插件加载时创建的常驻网络线程，是 JitterBuffer 唯一的写者。
@@ -196,5 +196,19 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
 - 规格要求"先在 M4 本机闭环（SenderAddress = 127.0.0.1），再部署到 M2"。开发机是 M2，本机闭环用
   `e2e-local.sh` 在进程内完成；装进 coreaudiod 后直接用广播发现连 M4。
 
-人工验收记录（待填）：
+人工验收记录（2026-11-02，M2，默认配置 = 广播发现）：
+- **沙盒风险已排除**：驱动在 `Core-Audio-Driver-Service.helper` 里正常创建 socket、广播 DISCOVER，
+  IO 开始后 3 ms 找到 M4（`found sender "M4 Mic" 192.168.1.4:47810`）。
+- QuickTime 录音：用户通过屏幕共享操作 M2，听不到 M2 的声音（屏幕共享默认不传音频），所以由我分析录音文件
+  `~/Desktop/test.m4a`：6.4 s，两段说话，浊音帧基频中位数 145 Hz，峰值 −5.4 dBFS 无削波，底噪约 −81 dBFS，
+  说话段内未检测到掉音。
+- 听写：麦克风来源设为 M4 Mic，在备忘录里听写中文，识别正常（用户确认）。
+- 自动停止 / 恢复：结束 QuickTime 和听写后 M4 sender 出现 `capture: stopped`，再开始听写时自动 `capture: started`（用户确认）。
+  驱动日志对应地出现 `IO stopped, unsubscribed` 和 `IO started, subscribing`（复用已发现的发送端，不再广播）。
+- 驱动统计：约 2 分钟内 21772 包，**丢包 0**，过载 0；**欠载 7 次**（约每 20 s 一次），缓冲深度在 12–26 ms 之间波动。
+  - 原因：目标缓冲 20 ms，而 HAL 每次读取 512 帧（10.7 ms），留给到达抖动的余量只有约 9 ms；
+    发送端每 ~10 ms 成对发包，加上网络抖动（阶段 1 测得 RFC 3550 抖动 5.3 ms），偶尔晚到超过余量即欠载。
+    每次欠载会补约 20 ms 静音。
+  - 处理：放到阶段 4（验收要求"除故障期间外没有欠载"），先实测到达时间分布，再定缓冲目标
+    （规格允许端到端 ≤ 50 ms）。
 
