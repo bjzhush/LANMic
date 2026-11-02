@@ -104,3 +104,5 @@ M4 用一条 `scp` 从 M2 拉取 `netmic-sender`（见 README）。
   - 抖动 5.3 ms 比回环（0.5 ms）高，主要是发送端成对发包：sink node 按 ~10 ms 的设备 IO 周期回调，
     一次凑出两个 240 帧包连发。20 ms 的抖动缓冲目标足够吸收。
   - 漂移 +0.1 ppm，小于预期的几 ppm；估计代码已复查，阶段 3 驱动的 PI 环运行时再对照。
+- 无订阅者后自动释放麦克风：sender `-v` 日志显示 `subscribers 0 | capture off`，发包数不再增加。
+  （`capture off` 与 `capture: stopped` 日志在同一处设置；用户未在滚动的日志里找到该行，也未观察到菜单栏橙色指示点。）
