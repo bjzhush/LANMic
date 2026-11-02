@@ -93,3 +93,7 @@ endif()
 add_executable(netmic_replay tools/replay.cpp)
 target_link_libraries(netmic_replay PRIVATE netmic_core)
 target_compile_options(netmic_replay PRIVATE -Wall -Wextra)
+
+# Finds digital-silence runs (driver had no data) in a long recording of the device.
+add_executable(netmic_find_gaps tools/find_gaps.cpp)
+target_compile_options(netmic_find_gaps PRIVATE -Wall -Wextra)
