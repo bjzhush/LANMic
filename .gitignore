@@ -1,0 +1,6 @@
+.DS_Store
+.build/
+.swiftpm/
+sender/.build/
+driver/build/
+*.wav
