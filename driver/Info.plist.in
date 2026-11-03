@@ -55,7 +55,7 @@
 		<key>DeviceName</key>
 		<string>M4 Mic</string>
 		<key>SenderAddress</key>
-		<string></string>
+		<string>192.168.1.4</string>
 		<key>Port</key>
 		<integer>47810</integer>
 		<key>TargetLatencyMs</key>

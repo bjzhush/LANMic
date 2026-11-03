@@ -108,7 +108,7 @@ scripts/install-driver.sh --set TargetLatencyMs=40 --set SenderAddress=192.168.1
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `DeviceName` | M4 Mic | 系统里显示的设备名 |
-| `SenderAddress` | 空 | 空 = 广播自动发现；填 IP = 直连这台发送端（广播被路由器拦掉时用） |
+| `SenderAddress` | 192.168.1.4 | 发送端（M4 有线网卡）的 IP，直连它，只走有线；设为空（`--set SenderAddress=`）= 广播自动发现 |
 | `Port` | 47810 | 发送端端口 |
 | `TargetLatencyMs` | 20 | 抗抖动缓冲（5–200 ms）。越大越不容易断，延迟也越大 |
 | `Channels` | 1 | 设为 2 时把单声道复制成立体声（个别只认立体声的应用） |
@@ -119,15 +119,11 @@ scripts/install-driver.sh --set TargetLatencyMs=40 --set SenderAddress=192.168.1
 有线局域网下，默认 20 ms 缓冲在一小时的测试里只有 1 次欠载（约 10 ms 静音）。Wi-Fi 的包会成批到达，还会丢包，
 同样的缓冲会断断续续。
 
-- 驱动通过广播在所有网卡上找发送端：有线断开而 Wi-Fi 还在时，会自动改走 Wi-Fi；当前路径 5 s 收不到音频时会重新广播，
-  这时有线通了就会回到有线（实测有线恢复后约 30 s 切回）。
-- 想只走有线、永远不切到 Wi-Fi：把发送端固定成 M4 的有线 IP（最好在路由器里给 M4 的有线网卡绑定这个 IP）：
-
-  ```bash
-  scripts/install-driver.sh --set SenderAddress=192.168.1.4
-  ```
-
-  这样有线断开时就是静音，有线恢复后几秒内自动接上。驱动日志里 `found sender` 后面的地址就是当前走的那条路。
+- **默认只走有线**：仓库默认配置 `SenderAddress=192.168.1.4`（M4 的有线 IP），驱动直接连它，不广播。
+  有线断开时 “M4 Mic” 是静音，有线恢复后几秒内自动接上。请在路由器里给 M4 的有线网卡固定这个 IP；
+  IP 不同时安装时改掉：`scripts/install-driver.sh --set SenderAddress=<M4 有线 IP>`。
+- 改回广播自动发现：`scripts/install-driver.sh --set SenderAddress=`。这时驱动在所有网卡上找发送端，有线断开而
+  Wi-Fi 还在时会自动改走 Wi-Fi；当前路径 5 s 收不到音频时重新广播，有线通了就回到有线（实测约 30 s 切回）。
 - 一定要用 Wi-Fi 时，把缓冲加大，延迟会相应增加约 40 ms：
 
   ```bash
@@ -141,10 +137,10 @@ scripts/install-driver.sh --set TargetLatencyMs=40 --set SenderAddress=192.168.1
 **“M4 Mic” 有了，但录到的是静音。**
 1. M4 上 App 在运行吗？菜单里的状态是不是“正在发送给 …”？还在“待机”说明 M2 没连上，往下看。
 2. 在 M2 上看驱动日志：`scripts/logs.sh`。
-   - 一直是 `discovering` 没有 `found sender`：M4 没有回应。先看 M4「系统设置 → 隐私与安全性 → 本地网络」里
-     NetMic Sender 是否打开（被拒时 App 发不出任何包）；再检查两台在同一网段，或者直接指定地址
-     `scripts/install-driver.sh --set SenderAddress=<M4 的 IP>`。
-   - 反复出现 `found sender` 和 `silent for 5 s`：M4 回应了但没有音频，一般是 M4 的麦克风被别的程序占用
+   - 每 10 秒的统计里 `packets` 一直不涨：M4 没有回应。先看 M4「系统设置 → 隐私与安全性 → 本地网络」里
+     NetMic Sender 是否打开（被拒时 App 发不出任何包）；再确认 M4 有线网卡的 IP 还是 `SenderAddress`
+     （默认 192.168.1.4，变了就用 `--set SenderAddress=<新 IP>` 重新安装）。
+   - 广播发现模式下反复出现 `found sender` 和 `silent for 5 s`：M4 回应了但没有音频，一般是 M4 的麦克风被别的程序占用
      或者没插好，看 App 的状态和电平条。
 3. App 状态是“正在发送”但电平条不动：麦克风选错了，或者 M4 上麦克风权限被拒（菜单里会有红字和打开设置的按钮）。
 

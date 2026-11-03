@@ -341,5 +341,7 @@ JitterBuffer，模拟 HAL 每 10.67 ms 读 512 帧（16 个读相位，合计相
   `NetMicConfig:SenderAddress` = `192.168.1.4`，其余为默认（20 ms、1 声道、端口 47810、无 Token）。
 - 驱动日志确认：`loading: ... sender 192.168.1.4:47810`，不再广播发现；之后两次 IO 收包丢包 0。
 - 效果：有线断开时 “M4 Mic” 为静音，不会改走 Wi-Fi；有线恢复后订阅心跳（每 500 ms）自动接上。
-- 注意：这是安装时的覆盖，仓库里 `driver/Info.plist.in` 的默认值仍是广播发现。以后重新安装驱动时要带上
-  `--set SenderAddress=192.168.1.4`，否则会回到广播发现。M4 有线网卡的 IP 最好在路由器里固定。
+- 随后（用户要求）仓库默认也改为固定有线：`driver/Info.plist.in` 的 `SenderAddress` = `192.168.1.4`，
+  直接 `scripts/install-driver.sh` 即可，不用再带 `--set`。改回广播发现：`--set SenderAddress=`（已验证 PlistBuddy
+  写入空字符串）。代码里 `Config` 的默认值仍为空（广播），只影响 bundle 的默认配置；测试不受影响（e2e 自己改成
+  127.0.0.1，NetReceiver 测试用代码构造的 Config），全部通过。M4 有线网卡的 IP 需要在路由器里固定。
