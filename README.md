@@ -121,6 +121,13 @@ scripts/install-driver.sh --set TargetLatencyMs=40 --set SenderAddress=192.168.1
 
 - 驱动通过广播在所有网卡上找发送端：有线断开而 Wi-Fi 还在时，会自动改走 Wi-Fi；当前路径 5 s 收不到音频时会重新广播，
   这时有线通了就会回到有线（实测有线恢复后约 30 s 切回）。
+- 想只走有线、永远不切到 Wi-Fi：把发送端固定成 M4 的有线 IP（最好在路由器里给 M4 的有线网卡绑定这个 IP）：
+
+  ```bash
+  scripts/install-driver.sh --set SenderAddress=192.168.1.4
+  ```
+
+  这样有线断开时就是静音，有线恢复后几秒内自动接上。驱动日志里 `found sender` 后面的地址就是当前走的那条路。
 - 一定要用 Wi-Fi 时，把缓冲加大，延迟会相应增加约 40 ms：
 
   ```bash
