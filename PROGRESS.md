@@ -366,3 +366,4 @@ SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解�
 - 打包线程改为由 IO 回调 `DispatchSemaphore.signal()` 唤醒（无分配、无锁），不再 1 ms 轮询；等待带 100 ms 超时，
   只用于响应停止。实测（M2 App 采集 “M4 Mic” → 本机 `netmic-probe --stats 15`）：200 包/秒、丢包 0、抖动 0.04 ms。
 - 测试全部通过（Swift 24、C++ 44、端到端）。M4 上需要重新拷贝 App，ad-hoc 签名变了会再问一次麦克风权限。
+- 用户在 M4 上更新 App 后确认 CPU 占用已降下来（2026-11-09）。
