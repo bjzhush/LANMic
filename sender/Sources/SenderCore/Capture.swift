@@ -179,14 +179,16 @@ public final class Capture: @unchecked Sendable {  // state on `queue` or behind
 
         guard let ring = nm_ring_create(UInt32(hw.sampleRate)) else { throw CaptureError(description: "ring alloc") }
         let channel = options.channel
+        let dataReady = DispatchSemaphore(value: 0)
         let sink = AVAudioSinkNode { _, frames, abl in
             nm_ring_push_abl(ring, abl, frames, channel)
+            dataReady.signal()  // wakes the packetizer; no allocation or lock
             return noErr
         }
         engine.attach(sink)
         engine.connect(input, to: sink, format: format)
 
-        let worker = Worker(ring: ring, inputRate: hw.sampleRate, gain: powf(10, options.gainDb / 20))
+        let worker = Worker(ring: ring, dataReady: dataReady, inputRate: hw.sampleRate, gain: powf(10, options.gainDb / 20))
         worker.onBlock = { [weak self] samples, streamId, pos in
             self?.account(samples)
             self?.onBlock?(samples, streamId, pos)
@@ -313,6 +315,7 @@ private final class Worker {
     var onBlock: (([Int16], UInt32, UInt64) -> Void)?
 
     private let ring: OpaquePointer
+    private let dataReady: DispatchSemaphore  // signalled by the IO callback after each push
     private let inputRate: Double
     private let gain: Float
     private let stopLock = NSLock()
@@ -320,8 +323,9 @@ private final class Worker {
     private let done = DispatchSemaphore(value: 0)
     private var thread: Thread?
 
-    init(ring: OpaquePointer, inputRate: Double, gain: Float) {
+    init(ring: OpaquePointer, dataReady: DispatchSemaphore, inputRate: Double, gain: Float) {
         self.ring = ring
+        self.dataReady = dataReady
         self.inputRate = inputRate
         self.gain = gain
     }
@@ -340,6 +344,7 @@ private final class Worker {
     func finish() {
         if thread != nil {
             stopLock.withLock { stopRequested = true }
+            dataReady.signal()
             done.wait()
         }
         nm_ring_destroy(ring)
@@ -359,7 +364,9 @@ private final class Worker {
         while !shouldStop {
             let n = Int(scratch.withUnsafeMutableBufferPointer { nm_ring_read(ring, $0.baseAddress!, UInt32(chunk)) })
             if n == 0 {
-                usleep(1000)
+                // Sleep until the IO callback pushes more (every 5 ms at 240-frame IO);
+                // the timeout only bounds how long a stop request waits.
+                _ = dataReady.wait(timeout: .now() + .milliseconds(100))
                 continue
             }
             if let converter {

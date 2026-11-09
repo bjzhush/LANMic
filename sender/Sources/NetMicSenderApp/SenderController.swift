@@ -35,6 +35,7 @@ final class SenderController: ObservableObject {
     private var capture: Capture?
     private var serverDone: DispatchSemaphore?
     private var pollTimer: Timer?
+    private var menuVisible = false
     private let pollQueue = DispatchQueue(label: "netmic.app.poll")
 
     init() {
@@ -48,9 +49,7 @@ final class SenderController: ObservableObject {
         refreshDevices()
         if selectedUID == nil, let d = defaultInputDevice() { remember(d) }
 
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.poll() }
-        }
+        schedulePoll()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
                                                queue: nil) { [weak self] _ in
             MainActor.assumeIsolated { self?.shutdown() }
@@ -191,17 +190,39 @@ final class SenderController: ObservableObject {
         stopServer()
     }
 
+    /// The level meter is only visible with the menu open: poll 5×/s then, once a
+    /// second otherwise (just enough for the menu-bar icon).
+    func setMenuVisible(_ visible: Bool) {
+        guard visible != menuVisible else { return }
+        menuVisible = visible
+        schedulePoll()
+        if visible { poll() }
+    }
+
+    private func schedulePoll() {
+        pollTimer?.invalidate()
+        let timer = Timer(timeInterval: menuVisible ? 0.2 : 1.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+        timer.tolerance = menuVisible ? 0.05 : 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
     private func poll() {
         guard let server, let capture else { return }
+        let wantLevel = menuVisible
         pollQueue.async {
             // takeLevel waits on the capture queue, which can be busy starting the engine.
             let status = server.status()
-            let level = capture.takeLevel()
+            let level: Float = wantLevel && status.capturing ? capture.takeLevel().peakDb : -120
             Task { @MainActor in
                 guard self.server === server else { return }
-                self.capturing = status.capturing
-                self.subscribers = status.subscribers
-                self.levelDb = status.capturing ? level.peakDb : -120
+                // Assign only on change: every @Published write re-renders the
+                // menu-bar item, which was most of this app's idle CPU.
+                if self.capturing != status.capturing { self.capturing = status.capturing }
+                if self.subscribers != status.subscribers { self.subscribers = status.subscribers }
+                if abs(self.levelDb - level) >= 0.5 { self.levelDb = level }
             }
         }
     }

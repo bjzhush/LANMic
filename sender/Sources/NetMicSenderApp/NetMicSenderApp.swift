@@ -63,7 +63,11 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 320)
-        .onAppear { controller.refreshDevices() }
+        .onAppear {
+            controller.refreshDevices()
+            controller.setMenuVisible(true)
+        }
+        .onDisappear { controller.setMenuVisible(false) }
     }
 }
 

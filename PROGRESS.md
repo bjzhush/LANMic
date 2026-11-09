@@ -345,3 +345,24 @@ JitterBuffer，模拟 HAL 每 10.67 ms 读 512 帧（16 个读相位，合计相
   直接 `scripts/install-driver.sh` 即可，不用再带 `--set`。改回广播发现：`--set SenderAddress=`（已验证 PlistBuddy
   写入空字符串）。代码里 `Config` 的默认值仍为空（广播），只影响 bundle 的默认配置；测试不受影响（e2e 自己改成
   127.0.0.1，NetReceiver 测试用代码构造的 Config），全部通过。M4 有线网卡的 IP 需要在路由器里固定。
+
+## NetMic Sender CPU 优化（2026-11-09）
+
+用户反馈：M4 上 NetMic Sender 在活动监视器 CPU 排前三。在 M2 上用同一份代码测量（`ps` 累计 CPU 时间）：
+
+| 情况 | 优化前 | 优化后 |
+|---|---|---|
+| 命令行 sender 空闲（对照，同一核心） | 0.05% | — |
+| App 空闲（无接收端、菜单关闭） | 2.7% | 0.22% |
+| App 采集中（常开，菜单关闭，含 AVAudioEngine IO 线程） | —（估计 ≥4%） | 0.9% |
+
+原因（`sample` 确认）：App 每 0.2 s 轮询一次状态，并且**每次都给 @Published 属性赋值**（即使值没变），
+SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解析符号图片、自动布局、Core Animation 提交），
+菜单关着、没在采集时也一样。另外采集时打包线程每 1 ms 轮询一次环形缓冲区（`--tone` 对照测得约 1.3%）。
+
+改动：
+- 只在值变化时赋值；电平变化小于 0.5 dB 不更新。
+- 菜单打开时每 0.2 s 轮询并读电平；菜单关闭时每 1 s 只查状态（图标），不读电平（timer 带 tolerance）。
+- 打包线程改为由 IO 回调 `DispatchSemaphore.signal()` 唤醒（无分配、无锁），不再 1 ms 轮询；等待带 100 ms 超时，
+  只用于响应停止。实测（M2 App 采集 “M4 Mic” → 本机 `netmic-probe --stats 15`）：200 包/秒、丢包 0、抖动 0.04 ms。
+- 测试全部通过（Swift 24、C++ 44、端到端）。M4 上需要重新拷贝 App，ad-hoc 签名变了会再问一次麦克风权限。
