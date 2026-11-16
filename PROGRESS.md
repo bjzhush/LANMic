@@ -367,3 +367,35 @@ SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解�
   只用于响应停止。实测（M2 App 采集 “M4 Mic” → 本机 `netmic-probe --stats 15`）：200 包/秒、丢包 0、抖动 0.04 ms。
 - 测试全部通过（Swift 24、C++ 44、端到端）。M4 上需要重新拷贝 App，ad-hoc 签名变了会再问一次麦克风权限。
 - 用户在 M4 上更新 App 后确认 CPU 占用已降下来（2026-11-09）。
+
+## 故障排查：M2 升级系统后语音输入失效（2026-11-16）
+
+现象：M2 升级 macOS（27.3，26C5035r）后，在 M4 上通过屏幕共享按快捷键触发 M2 的豆包语音输入，不出字。
+（语音输入链路：M4 的 BTT 发 HTTP 请求 `http://192.168.1.2:12366/trigger_named/?trigger_name=LeftCmdVoice`
+→ M2 的 BTT 执行命名触发器 → `osascript -l JavaScript ~/Scripts/leftcmd.js` 模拟按左 Command → 豆包开始录音，
+输入设备是 “M4 Mic”。此链路不在本仓库里。）
+
+排查过程（结论：**与 NetMic 无关**）：
+1. NetMic 正常：驱动已加载，“M4 Mic” 是默认输入；ping M4 约 0.6 ms；00:57 的一次 IO 会话收 1278 包、丢包 0。
+   但触发时驱动日志没有 `IO started`，说明豆包根本没开始录音。
+2. M2 上 BTT 在 `192.168.1.2:12366` 监听（防火墙关闭）；日志显示 BTT 的 HTTP 服务 00:58:35 才重启（用户恢复 M4/M2 的
+   BTT 配置时），之前的请求被拒，对应 M4 curl 得到 `000`，之后得到 `404`（端口通）。
+3. M4 能访问 M2 的 BTT API（`get_string_variable` 返回 `com.googlecode.iterm2`）。在 M2 本机发同一个
+   `trigger_named` 请求，BTT 返回 HTTP 200 但什么都没发生。
+4. 根因：M2 上有两份 BTT，各用一套配置库（`~/Library/Application Support/BetterTouchTool/btt_data_store.version_*`）：
+
+   | 位置 | 版本 | `LeftCmdVoice` |
+   |---|---|---|
+   | `/Applications/BetterTouchTool.app` | 5.800 | 有（旧配置库，最后写入 11-11） |
+   | `~/Applications/BetterTouchTool.app` | 6.1142，正在运行 | 没有 |
+
+   `~/Applications` 那份 11-03 出现（来源不明，非浏览器下载），11-12 由 Sparkle 原地升级到 6.1142。升级系统重启后
+   登录启动的是这一份，它的配置里没有该命名触发器，所以 HTTP 请求返回 200 却没有动作。
+5. 处理：用户重启系统后（中途系统卡死），新版 BTT 的配置里出现了 `LeftCmdVoice`（我没能通过 BTT API 自动添加，
+   该操作被权限拦截；推测是 BTT 重启时迁移了配置），语音输入恢复。之后的 IO 会话：7869 包、丢包 0、无欠载、
+   缓冲约 19 ms。随后用户删除了 `/Applications` 里的旧版 BTT，登录项里只剩一个 BTT。
+
+经验：
+- 语音输入不出字时，先看 `scripts/logs.sh` 有没有 `IO started`：没有就是触发链路（BTT/输入法）的问题，不是 NetMic。
+- BTT 的 `trigger_named` 对不存在的触发器也返回 200，不能用返回码判断触发器是否存在。
+- 不要同时保留两份 BTT：它们配置不共享，系统升级/重启后启动哪一份不确定。
