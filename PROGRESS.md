@@ -406,4 +406,5 @@ SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解�
 - `scripts/make-icon.swift` 用 CoreGraphics 绘制（青到深蓝渐变、白色麦克风、向右的声波），生成 `sender/App/AppIcon.icns`
   （已入库，改图形后才需要重跑）；`Info.plist` 加 `CFBundleIconFile`，`build-app.sh` 复制到 Resources。
 - 不含 16/32 px 版本：带上时 macOS 27 会给小图标套灰框；去掉后由系统从大图缩放，256–16 px 渲染均正常。
-- 菜单栏图标不变（单色 SF Symbol）。构建和签名校验通过；M4 上需重新拷贝 App。
+- 菜单栏图标不变（单色 SF Symbol）。构建和签名校验通过。
+- 用户在 M4 上更新 App 后确认图标显示正常（2026-11-24）。
