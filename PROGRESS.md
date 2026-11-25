@@ -378,8 +378,8 @@ SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解�
 排查过程（结论：**与 NetMic 无关**）：
 1. NetMic 正常：驱动已加载，“M4 Mic” 是默认输入；ping M4 约 0.6 ms；00:57 的一次 IO 会话收 1278 包、丢包 0。
    但触发时驱动日志没有 `IO started`，说明豆包根本没开始录音。
-2. M2 上 BTT 在 `192.168.1.2:12366` 监听（防火墙关闭）；日志显示 BTT 的 HTTP 服务 00:58:35 才重启（用户恢复 M4/M2 的
-   BTT 配置时），之前的请求被拒，对应 M4 curl 得到 `000`，之后得到 `404`（端口通）。
+2. M2 上 BTT 在 `192.168.1.2:12366` 监听（防火墙关闭）；日志里 00:58:35 有一条 HTTP 服务启动记录。
+   M4 上 curl 得到 `000 404`：`404` 说明端口通；`000` 原因不明（curl 是 01:00 之后跑的，不能用 00:58 的启动解释）。
 3. M4 能访问 M2 的 BTT API（`get_string_variable` 返回 `com.googlecode.iterm2`）。在 M2 本机发同一个
    `trigger_named` 请求，BTT 返回 HTTP 200 但什么都没发生。
 4. 根因：M2 上有两份 BTT，各用一套配置库（`~/Library/Application Support/BetterTouchTool/btt_data_store.version_*`）：
@@ -389,8 +389,9 @@ SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解�
    | `/Applications/BetterTouchTool.app` | 5.800 | 有（旧配置库，最后写入 11-11） |
    | `~/Applications/BetterTouchTool.app` | 6.1142，正在运行 | 没有 |
 
-   `~/Applications` 那份 11-03 出现（来源不明，非浏览器下载），11-12 由 Sparkle 原地升级到 6.1142。升级系统重启后
-   登录启动的是这一份，它的配置里没有该命名触发器，所以 HTTP 请求返回 200 却没有动作。
+   `~/Applications` 那份 11-03 出现（来源不明，非浏览器下载），11-12 由 Sparkle 原地升级到 6.1142。排查时
+   运行的是这一份，它的配置里没有该命名触发器，所以 HTTP 请求返回 200 却没有动作。何时从旧版换成这一份不确定：
+   可能是升级系统重启后，也可能更早（6.999 的配置库 11-14 还有写入）。
 5. 处理：用户重启系统后（中途系统卡死），新版 BTT 的配置里出现了 `LeftCmdVoice`（我没能通过 BTT API 自动添加，
    该操作被权限拦截；推测是 BTT 重启时迁移了配置），语音输入恢复。之后的 IO 会话：7869 包、丢包 0、无欠载、
    缓冲约 19 ms。随后用户删除了 `/Applications` 里的旧版 BTT，登录项里只剩一个 BTT。
@@ -399,3 +400,10 @@ SwiftUI 因此每秒 5 次重绘菜单栏图标（主线程上 NSButtonCell 解�
 - 语音输入不出字时，先看 `scripts/logs.sh` 有没有 `IO started`：没有就是触发链路（BTT/输入法）的问题，不是 NetMic。
 - BTT 的 `trigger_named` 对不存在的触发器也返回 200，不能用返回码判断触发器是否存在。
 - 不要同时保留两份 BTT：它们配置不共享，系统升级/重启后启动哪一份不确定。
+
+## NetMic Sender 应用图标（2026-11-24）
+
+- `scripts/make-icon.swift` 用 CoreGraphics 绘制（青到深蓝渐变、白色麦克风、向右的声波），生成 `sender/App/AppIcon.icns`
+  （已入库，改图形后才需要重跑）；`Info.plist` 加 `CFBundleIconFile`，`build-app.sh` 复制到 Resources。
+- 不含 16/32 px 版本：带上时 macOS 27 会给小图标套灰框；去掉后由系统从大图缩放，256–16 px 渲染均正常。
+- 菜单栏图标不变（单色 SF Symbol）。构建和签名校验通过；M4 上需重新拷贝 App。

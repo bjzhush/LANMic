@@ -14,6 +14,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/sender/.build/release/NetMicSender" "$APP/Contents/MacOS/NetMicSender"
 cp "$ROOT/sender/App/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/sender/App/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"  # drawn by scripts/make-icon.swift
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 # Ad-hoc signature: macOS ties the microphone permission to it, so each rebuild
 # asks for permission again.
